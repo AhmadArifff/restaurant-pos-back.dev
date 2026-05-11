@@ -2,64 +2,76 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
 
-// Ensure table exists on startup
+const ALLOWED_DATA_TYPES = new Set(['string', 'number', 'boolean', 'json']);
+
+const normalizeDataType = (value) => (ALLOWED_DATA_TYPES.has(value) ? value : 'string');
+const normalizeSettingValue = (value) => (value == null ? '' : String(value));
+
+// Ensure table exists and stays aligned with migration 015 schema
 const ensureTableExists = async () => {
   try {
-    const query = `
+    await db.query(`
       CREATE TABLE IF NOT EXISTS website_settings (
         id INT PRIMARY KEY AUTO_INCREMENT,
         setting_key VARCHAR(100) UNIQUE NOT NULL,
-        setting_value LONGTEXT,
+        setting_value LONGTEXT NOT NULL,
         data_type ENUM('string','number','boolean','json') DEFAULT 'string',
         updated_by INT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
         INDEX idx_setting_key (setting_key)
       )
-    `;
-    await db.query(query);
-    console.log('✅ website_settings table ready');
+    `);
+
+    // Keep older deployments consistent with latest schema
+    await db.query(`
+      ALTER TABLE website_settings
+      MODIFY setting_value LONGTEXT NOT NULL,
+      MODIFY data_type ENUM('string','number','boolean','json') DEFAULT 'string'
+    `);
+
+    console.log('website_settings table ready');
   } catch (error) {
-    console.error('❌ Error creating website_settings table:', error.message);
+    console.error('Error creating website_settings table:', error.message);
     throw error;
   }
 };
 
-// Initialize table on module load
-ensureTableExists().catch(err => {
+ensureTableExists().catch((err) => {
   console.error('Failed to initialize settings table:', err);
 });
 
 module.exports = {
-  // Get all settings
+  // Public: get all settings
   getAll: async (req, res) => {
     try {
       await ensureTableExists();
-      const [rows] = await db.query('SELECT setting_key, setting_value FROM website_settings ORDER BY setting_key');
-      
-      // Transform array to object for easier access
+      const [rows] = await db.query(
+        'SELECT setting_key, setting_value FROM website_settings ORDER BY setting_key',
+      );
+
       const settings = {};
       if (Array.isArray(rows)) {
-        rows.forEach(row => {
+        rows.forEach((row) => {
           settings[row.setting_key] = row.setting_value;
         });
       }
 
       res.json(settings);
     } catch (err) {
-      console.error('❌ Error fetching settings:', err.message);
+      console.error('Error fetching settings:', err.message);
       res.status(500).json({ error: 'Gagal mengambil settings', details: err.message });
     }
   },
 
-  // Get specific setting by key
+  // Public: get setting by key
   getByKey: async (req, res) => {
     try {
       await ensureTableExists();
       const { key } = req.params;
       const [rows] = await db.query(
         'SELECT setting_value FROM website_settings WHERE setting_key = ?',
-        [key]
+        [key],
       );
 
       if (!Array.isArray(rows) || rows.length === 0) {
@@ -68,69 +80,74 @@ module.exports = {
 
       res.json({ value: rows[0].setting_value });
     } catch (err) {
-      console.error('❌ Error fetching setting by key:', err.message);
+      console.error('Error fetching setting by key:', err.message);
       res.status(500).json({ error: 'Gagal mengambil setting', details: err.message });
     }
   },
 
-  // Update single setting
+  // Admin: update single setting
   update: async (req, res) => {
     try {
       await ensureTableExists();
-      const { setting_key, setting_value } = req.body;
-      
+      const {
+        setting_key,
+        setting_value,
+        data_type = 'string',
+      } = req.body;
+
       if (!setting_key) {
         return res.status(400).json({ error: 'setting_key diperlukan' });
       }
 
-      const updated_by = req.user?.id || 1;
+      const safeType = normalizeDataType(data_type);
+      const safeValue = normalizeSettingValue(setting_value);
+      const updatedBy = req.user?.id || 1;
 
       await db.query(
-        `INSERT INTO website_settings (setting_key, setting_value, updated_by)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
-        [setting_key, setting_value, updated_by]
+        `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           setting_value = VALUES(setting_value),
+           data_type = VALUES(data_type),
+           updated_by = VALUES(updated_by)`,
+        [setting_key, safeValue, safeType, updatedBy],
       );
 
-      res.json({ 
+      res.json({
         message: 'Setting berhasil disimpan',
         setting_key,
-        setting_value
+        setting_value: safeValue,
+        data_type: safeType,
       });
     } catch (err) {
-      console.error('❌ Error updating setting:', err.message);
+      console.error('Error updating setting:', err.message);
       res.status(500).json({ error: 'Gagal menyimpan setting', details: err.message });
     }
   },
 
-  // Update with file upload
+  // Admin: upload and save image setting
   updateWithFile: async (req, res) => {
     try {
       await ensureTableExists();
       const { setting_key } = req.body;
-      
+
       if (!setting_key || !req.file) {
         return res.status(400).json({ error: 'setting_key dan file diperlukan' });
       }
 
-      // Create branding directory if not exists
       const brandingDir = path.join(__dirname, '../../public/images/branding');
       if (!fs.existsSync(brandingDir)) {
         fs.mkdirSync(brandingDir, { recursive: true });
       }
 
-      // Generate filename
       const ext = path.extname(req.file.originalname);
       const filename = `${setting_key}-${Date.now()}${ext}`;
       const filepath = path.join(brandingDir, filename);
-
-      // Save file
       fs.writeFileSync(filepath, req.file.buffer);
 
-      // Get old file path to delete
       const [oldRows] = await db.query(
         'SELECT setting_value FROM website_settings WHERE setting_key = ?',
-        [setting_key]
+        [setting_key],
       );
 
       if (Array.isArray(oldRows) && oldRows.length > 0 && oldRows[0].setting_value) {
@@ -143,64 +160,76 @@ module.exports = {
               fs.unlinkSync(fullOldPath);
             }
           } catch (e) {
-            console.log('⚠️ Warning: Could not delete old file:', e.message);
+            console.log('Warning: Could not delete old file:', e.message);
           }
         }
       }
 
-      // Update database
-      const setting_value = `/images/branding/${filename}`;
-      const updated_by = req.user?.id || 1;
+      const settingValue = `/images/branding/${filename}`;
+      const updatedBy = req.user?.id || 1;
 
       await db.query(
-        `INSERT INTO website_settings (setting_key, setting_value, updated_by)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
-        [setting_key, setting_value, updated_by]
+        `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
+         VALUES (?, ?, 'string', ?)
+         ON DUPLICATE KEY UPDATE
+           setting_value = VALUES(setting_value),
+           data_type = VALUES(data_type),
+           updated_by = VALUES(updated_by)`,
+        [setting_key, settingValue, updatedBy],
       );
 
       res.json({
         message: 'File berhasil diunggah',
         setting_key,
-        setting_value,
-        file_url: setting_value,
-        filename
+        setting_value: settingValue,
+        file_url: settingValue,
+        filename,
       });
     } catch (err) {
-      console.error('❌ Error uploading file:', err.message);
+      console.error('Error uploading file:', err.message);
       res.status(500).json({ error: 'Gagal mengunggah file', details: err.message });
     }
   },
 
-  // Bulk update multiple settings
+  // Admin: bulk update settings
   bulkUpdate: async (req, res) => {
     try {
       await ensureTableExists();
       const settings = Array.isArray(req.body) ? req.body : req.body?.settings;
-      
+
       if (!Array.isArray(settings)) {
         return res.status(400).json({ error: 'Body harus berupa array settings' });
       }
 
-      const updated_by = req.user?.id || 1;
+      const updatedBy = req.user?.id || 1;
 
       for (const setting of settings) {
-        const { setting_key, setting_value } = setting;
-        
+        const {
+          setting_key,
+          setting_value,
+          data_type = 'string',
+        } = setting || {};
+
         if (!setting_key) continue;
 
+        const safeType = normalizeDataType(data_type);
+        const safeValue = normalizeSettingValue(setting_value);
+
         await db.query(
-          `INSERT INTO website_settings (setting_key, setting_value, updated_by)
-           VALUES (?, ?, ?)
-           ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
-          [setting_key, setting_value, updated_by]
+          `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
+           VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             setting_value = VALUES(setting_value),
+             data_type = VALUES(data_type),
+             updated_by = VALUES(updated_by)`,
+          [setting_key, safeValue, safeType, updatedBy],
         );
       }
 
       res.json({ message: 'Semua setting berhasil disimpan' });
     } catch (err) {
-      console.error('❌ Error bulk updating settings:', err.message);
+      console.error('Error bulk updating settings:', err.message);
       res.status(500).json({ error: 'Gagal menyimpan settings', details: err.message });
     }
-  }
+  },
 };
