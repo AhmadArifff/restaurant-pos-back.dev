@@ -7,10 +7,8 @@ router.get('/',      authenticate, c.getAll);
 router.post('/',     authenticate, isAdmin, upload.single('image'), c.create);
 router.put('/:id',   authenticate, isAdmin, upload.single('image'), c.update);
 router.delete('/:id',authenticate, isAdmin, c.remove);
-// Tambahkan sebelum route /:id
 router.get('/my-stock', authenticate, c.getMyStock); // kasir
 router.get('/stock-all', authenticate, c.getStockAllUsers);
 router.get('/stock-by-kasir', authenticate, isAdmin, c.getStockByKasir);
-router.get('/stock-by-kasir', authenticate, isAdmin, c.getStockByKasir); // ← tambah
 
 module.exports = router;

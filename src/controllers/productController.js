@@ -2,6 +2,16 @@ const db   = require('../config/db');
 const path = require('path');
 const fs   = require('fs');
 
+const USED_STOCK_BY_OWNER_SQL = `
+  SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
+  FROM transaction_items ti
+  JOIN transactions t ON ti.transaction_id = t.id
+  JOIN product_ingredients pi
+    ON pi.product_id = ti.product_id
+    AND pi.stock_item_id = ?
+  WHERE COALESCE(t.source_user_id, t.created_by) = ?
+`;
+
 exports.getAll = async (req, res) => {
   try {
     const { category_id, search } = req.query;
@@ -28,17 +38,13 @@ exports.getAll = async (req, res) => {
       `, [p.id]);
       p.ingredients = ings;
 
-      // Hitung stok produk dari:
-      // 1. Stok gudang (main_stock)
-      // 2. Stok yang sudah di-approve dari kasir (qty_approved - qty_used)
+      // Hitung stok produk dari approved request saja.
+      // Catatan: stok kasir/user tidak boleh dicampur dengan stok gudang umum.
       if (ings.length > 0) {
         let minStock = Infinity;
 
         for (const ing of ings) {
-          // Total dari gudang
-          const warehouseStock = ing.stock || 0;
-
-          // Total approved dari semua kasir/user
+          // Total approved dari semua user
           const [[approvedResult]] = await db.query(`
             SELECT COALESCE(SUM(sri.qty_approved), 0) AS total_approved
             FROM stock_requests sr
@@ -52,14 +58,12 @@ exports.getAll = async (req, res) => {
           const [[usedResult]] = await db.query(`
             SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total_used
             FROM transaction_items ti
-            JOIN transactions t ON ti.transaction_id = t.id
             JOIN product_ingredients pi ON pi.product_id = ti.product_id
               AND pi.stock_item_id = ?
           `, [ing.stock_item_id]);
 
           const approvedStock = Math.max(0, Number(approvedResult.total_approved) - Number(usedResult.total_used));
-          const totalAvailable = warehouseStock + approvedStock;
-          const portionsCanMake = Math.floor(totalAvailable / ing.qty);
+          const portionsCanMake = Math.floor(approvedStock / ing.qty);
           minStock = Math.min(minStock, portionsCanMake);
         }
 
@@ -211,14 +215,7 @@ exports.getMyStock = async (req, res) => {
         `, [userId, ing.stock_item_id]);
 
         // Total sudah dipakai di transaksi kasir ini
-        const [[used]] = await db.query(`
-          SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total_used
-          FROM transaction_items ti
-          JOIN transactions t ON ti.transaction_id = t.id
-          JOIN product_ingredients pi ON pi.product_id = ti.product_id
-            AND pi.stock_item_id = ?
-          WHERE t.created_by = ?
-        `, [ing.stock_item_id, userId]);
+        const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, userId]);
 
         // Stok = approved - used (TIDAK termasuk warehouse stock)
         const approvedStock = Math.max(0, Number(approved.total_approved) - Number(used.total_used));
@@ -278,15 +275,7 @@ exports.getStockByKasir = async (req, res) => {
               AND sri.stock_item_id = ? AND sri.qty_approved IS NOT NULL
           `, [kasir.id, ing.stock_item_id]);
 
-          const [[used]] = await db.query(`
-            SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
-            FROM transaction_items ti
-            JOIN transactions t ON ti.transaction_id = t.id
-            JOIN product_ingredients pi
-              ON pi.product_id = ti.product_id
-              AND pi.stock_item_id = ?
-            WHERE t.created_by = ?
-          `, [ing.stock_item_id, kasir.id]);
+          const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, kasir.id]);
 
           const remaining = Math.max(0, Number(approved.total) - Number(used.total));
           canMake = Math.min(canMake, Math.floor(remaining / ing.qty));
@@ -340,6 +329,7 @@ exports.getStockAllUsers = async (req, res) => {
         }
 
         let canMake = Infinity;
+        const ingredientStocks = [];
 
         for (const ing of ings) {
           // Total approved untuk user ini (dari approved requests SAJA, bukan warehouse)
@@ -353,18 +343,18 @@ exports.getStockAllUsers = async (req, res) => {
           `, [u.id, ing.stock_item_id]);
 
           // Total sudah dipakai di transaksi user ini
-          const [[used]] = await db.query(`
-            SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
-            FROM transaction_items ti
-            JOIN transactions t ON ti.transaction_id = t.id
-            JOIN product_ingredients pi
-              ON pi.product_id = ti.product_id
-              AND pi.stock_item_id = ?
-            WHERE t.created_by = ?
-          `, [ing.stock_item_id, u.id]);
+          const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, u.id]);
 
           // Stok hanya dari approved requests (TIDAK termasuk warehouse stock)
           const approvedStock = Math.max(0, Number(approved.total) - Number(used.total));
+          ingredientStocks.push({
+            stock_item_id: ing.stock_item_id,
+            ingredient_name: ing.ingredient_name,
+            unit: ing.unit,
+            qty_per_portion: Number(ing.qty),
+            available_qty: approvedStock,
+            can_make: Math.floor(approvedStock / Number(ing.qty || 1)),
+          });
           canMake = Math.min(canMake, Math.floor(approvedStock / ing.qty));
         }
 
@@ -373,6 +363,7 @@ exports.getStockAllUsers = async (req, res) => {
           user_name: u.name,
           role:      u.role,
           can_make:  canMake === Infinity ? 0 : canMake,
+          ingredients: ingredientStocks,
         });
       }
 
