@@ -14,7 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@google/genai": "^2.3.0",
+    "axios": "^1.16.1",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -22,7 +22,8 @@
     "express-validator": "^7.3.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
-    "mysql2": "^3.19.1"
+    "mysql2": "^3.19.1",
+    "pdfkit": "^0.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

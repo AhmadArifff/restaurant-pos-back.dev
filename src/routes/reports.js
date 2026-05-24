@@ -9,5 +9,7 @@ router.get('/best-selling', authenticate, isAdmin, c.bestSelling);
 router.get('/stock-low',    authenticate, c.stockLow);
 router.get('/years', authenticate, c.getTransactionYears);
 router.get('/sales-by-product', authenticate, isAdmin, c.salesByProduct);
+router.get('/business-analysis', authenticate, isAdmin, c.businessAnalysis);
+router.get('/business-analysis/pdf', authenticate, isAdmin, c.businessAnalysisPdf);
 
 module.exports = router;
