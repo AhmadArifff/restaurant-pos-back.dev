@@ -18,9 +18,12 @@ exports.submitRequest = async (req, res) => {
 
     // Cek sudah ada pengajuan pending hari ini
     // Cek HANYA pending — bukan rejected/approved
+    const pendingBranchWhere = branchId ? 'AND branch_id = ?' : '';
+    const pendingParams = [userId, today];
+    if (branchId) pendingParams.push(branchId);
     const [[existing]] = await conn.query(
-      "SELECT id, status FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' AND (? IS NULL OR branch_id = ?)",
-      [userId, today, branchId, branchId]
+      `SELECT id, status FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
+      pendingParams
     );
 
     let requestId;

@@ -80,14 +80,17 @@ const getOrderRowById = async (id) => {
 };
 
 const getBranchIngredientBalance = async (stockItemId, branchId) => {
+  const branchWhere = branchId ? 'AND branch_id = ?' : '';
+  const params = [stockItemId];
+  if (branchId) params.push(branchId);
   const [[balance]] = await db.query(`
     SELECT
       COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
       COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
     FROM main_stock
     WHERE stock_item_id = ?
-      AND (? IS NULL OR branch_id = ?)
-  `, [stockItemId, branchId, branchId]);
+      ${branchWhere}
+  `, params);
 
   return Math.max(0, Number(balance?.total || 0));
 };
@@ -175,6 +178,8 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 exports.listPublicTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req);
+    const branchWhere = branchId ? 'AND branch_id = ?' : '';
+    const params = branchId ? [branchId] : [];
     const orderBy = db.isPostgres
       ? 'table_number ASC'
       : 'CAST(table_number AS UNSIGNED), table_number';
@@ -182,9 +187,9 @@ exports.listPublicTables = async (req, res) => {
       SELECT id, table_number, table_name, capacity, qr_token, status, branch_id
       FROM dining_tables
       WHERE status = 'active'
-        AND (? IS NULL OR branch_id = ?)
+        ${branchWhere}
       ORDER BY ${orderBy}
-    `, [branchId, branchId]);
+    `, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -413,6 +418,8 @@ exports.submitReview = async (req, res) => {
 exports.listManagedTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const branchWhere = branchId ? 'WHERE dt.branch_id = ?' : '';
+    const params = branchId ? [branchId] : [];
     const [rows] = await db.query(`
       SELECT
         dt.id,
@@ -432,10 +439,10 @@ exports.listManagedTables = async (req, res) => {
       FROM dining_tables dt
       LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
-      WHERE (? IS NULL OR dt.branch_id = ?)
+      ${branchWhere}
       GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, dt.note, dt.created_by, dt.created_at, dt.updated_at
       ORDER BY dt.table_number ASC
-    `, [branchId, branchId]);
+    `, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });

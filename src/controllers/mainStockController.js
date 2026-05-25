@@ -5,6 +5,9 @@ const { getRequestBranchId } = require('../utils/branchContext');
 exports.getSummary = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const branchJoin = branchId ? 'AND ms.branch_id = ?' : '';
+    const latestBranchWhere = branchId ? 'AND ms2.branch_id = ?' : '';
+    const params = branchId ? [branchId, branchId] : [];
     const [rows] = await db.query(`
       SELECT
         si.id, si.name, si.unit, si.min_stock,
@@ -17,13 +20,13 @@ exports.getSummary = async (req, res) => {
         COALESCE(SUM(CASE WHEN ms.type='out' THEN ms.total_cost ELSE 0 END), 0) AS total_cost_out,
         -- Harga per unit dari pembelian terakhir
         (SELECT ms2.cost_per_unit FROM main_stock ms2
-         WHERE ms2.stock_item_id = si.id AND ms2.type = 'in'
+         WHERE ms2.stock_item_id = si.id AND ms2.type = 'in' ${latestBranchWhere}
          ORDER BY ms2.created_at DESC LIMIT 1) AS latest_cost_per_unit
       FROM stock_items si
-      LEFT JOIN main_stock ms ON ms.stock_item_id = si.id AND (? IS NULL OR ms.branch_id = ?)
+      LEFT JOIN main_stock ms ON ms.stock_item_id = si.id ${branchJoin}
       GROUP BY si.id, si.name, si.unit, si.min_stock, si.price_per_unit
       ORDER BY si.name ASC
-    `, [branchId, branchId]);
+    `, params);
     res.json(rows);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -34,6 +37,9 @@ exports.getMonthly = async (req, res) => {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const y = Number(year  || new Date().getFullYear());
     const m = Number(month || new Date().getMonth() + 1);
+    const params = [y, m];
+    const branchWhere = branchId ? 'AND ms.branch_id = ?' : '';
+    if (branchId) params.push(branchId);
 
     const [rows] = await db.query(`
       SELECT
@@ -45,9 +51,9 @@ exports.getMonthly = async (req, res) => {
       JOIN stock_items si ON ms.stock_item_id = si.id
       JOIN users u         ON ms.created_by = u.id
       WHERE YEAR(ms.created_at) = ? AND MONTH(ms.created_at) = ?
-        AND (? IS NULL OR ms.branch_id = ?)
+        ${branchWhere}
       ORDER BY ms.created_at DESC
-    `, [y, m, branchId, branchId]);
+    `, params);
     res.json(rows);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -269,6 +275,9 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
   if (type_filter === 'manual') {
     manualCond = `AND ms.source = 'request'`;
   }
+  const branchMainWhere = branchId ? 'AND ms.branch_id = ?' : '';
+  const mainParams = [from, to];
+  if (branchId) mainParams.push(branchId);
 
   const [rows] = await db.query(`
     SELECT
@@ -334,11 +343,11 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
 
     WHERE ms.type = 'out'
       AND DATE(ms.created_at) BETWEEN ? AND ?
-      AND (? IS NULL OR ms.branch_id = ?)
+      ${branchMainWhere}
       ${manualCond}
       ${userCond}
     ORDER BY ms.created_at DESC
-  `, [from, to, branchId, branchId]);
+  `, mainParams);
 
   results.push(...rows);
 }
@@ -350,6 +359,9 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
         type_filter === 'pending'  ? `AND sr.status = 'pending'`  :
         type_filter === 'rejected' ? `AND sr.status = 'rejected'` :
                                      `AND sr.status IN ('pending','rejected')`;
+      const branchRequestWhere = branchId ? 'AND sr.branch_id = ?' : '';
+      const requestParams = [from, to];
+      if (branchId) requestParams.push(branchId);
 
       const [rows] = await db.query(`
         SELECT
@@ -377,10 +389,10 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
         WHERE 1=1
           ${statusCond}
           AND DATE(sr.created_at) BETWEEN ? AND ?
-          AND (? IS NULL OR sr.branch_id = ?)
+          ${branchRequestWhere}
           ${userReqCond}
         ORDER BY sr.created_at DESC
-      `, [from, to, branchId, branchId]);
+      `, requestParams);
 
       results.push(...rows);
     }
@@ -402,6 +414,9 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
           const userTxCond = uid
             ? `AND COALESCE(t.source_user_id, t.${found}) = ${uid}`
             : '';
+          const branchTxWhere = branchId ? 'AND t.branch_id = ?' : '';
+          const txParams = [from, to];
+          if (branchId) txParams.push(branchId);
 
           const [rows] = await db.query(`
             SELECT
@@ -435,10 +450,10 @@ END AS admin_name,
             LEFT JOIN users kasir_src     ON kasir_src.id      = t.source_user_id
             LEFT JOIN users creator_u     ON creator_u.id      = t.created_by
             WHERE DATE(t.created_at) BETWEEN ? AND ?
-              AND (? IS NULL OR t.branch_id = ?)
+              ${branchTxWhere}
               ${userTxCond}
             ORDER BY t.created_at DESC
-          `, [from, to, branchId, branchId]);
+          `, txParams);
 
           results.push(...rows);
         }
@@ -532,9 +547,12 @@ exports.updatePurchase = async (req, res) => {
     const { id } = req.params;
     const { qty, cost_per_unit, note } = req.body;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const oldParams = [id];
+    const oldBranchWhere = branchId ? 'AND branch_id = ?' : '';
+    if (branchId) oldParams.push(branchId);
 
     const [[old]] = await conn.query(
-      "SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' AND (? IS NULL OR branch_id = ?)", [id, branchId, branchId]
+      `SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' ${oldBranchWhere}`, oldParams
     );
     if (!old) {
       await conn.rollback();
@@ -566,9 +584,12 @@ exports.deletePurchase = async (req, res) => {
     await conn.beginTransaction();
     const { id } = req.params;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const rowParams = [id];
+    const rowBranchWhere = branchId ? 'AND branch_id = ?' : '';
+    if (branchId) rowParams.push(branchId);
 
     const [[row]] = await conn.query(
-      "SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' AND (? IS NULL OR branch_id = ?)", [id, branchId, branchId]
+      `SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' ${rowBranchWhere}`, rowParams
     );
     if (!row) {
       await conn.rollback();
@@ -602,15 +623,17 @@ exports.addManualOut = async (req, res) => {
 
     // ── Validasi stok dulu ──
     for (const item of items) {
+      const stockJoinBranch = branchId ? 'AND ms.branch_id = ?' : '';
+      const stockParams = branchId ? [branchId, item.stock_item_id] : [item.stock_item_id];
       const [[si]] = await conn.query(
         `SELECT si.id, si.name,
           COALESCE(SUM(CASE WHEN ms.type='in' THEN ms.qty ELSE 0 END), 0) -
           COALESCE(SUM(CASE WHEN ms.type='out' THEN ms.qty ELSE 0 END), 0) AS stock
          FROM stock_items si
-         LEFT JOIN main_stock ms ON ms.stock_item_id = si.id AND (? IS NULL OR ms.branch_id = ?)
+         LEFT JOIN main_stock ms ON ms.stock_item_id = si.id ${stockJoinBranch}
          WHERE si.id = ?
          GROUP BY si.id, si.name`,
-        [branchId, branchId, item.stock_item_id]
+        stockParams
       );
       if (!si) {
         await conn.rollback();
@@ -631,9 +654,12 @@ exports.addManualOut = async (req, res) => {
     //   [targetUserId, today]
     // );
     // Cek pending saja — boleh buat baru jika sebelumnya rejected/approved
+    const pendingBranchWhere = branchId ? 'AND branch_id = ?' : '';
+    const pendingParams = [targetUserId, today];
+    if (branchId) pendingParams.push(branchId);
     const [[existingPending]] = await conn.query(
-      "SELECT id FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' AND (? IS NULL OR branch_id = ?)",
-      [targetUserId, today, branchId, branchId]
+      `SELECT id FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
+      pendingParams
     );
 
     let reqId;

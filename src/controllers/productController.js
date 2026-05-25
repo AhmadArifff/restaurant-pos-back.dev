@@ -36,14 +36,17 @@ const getUploadedProductImageUrl = async (file) => {
 };
 
 const getBranchIngredientBalance = async (stockItemId, branchId) => {
+  const branchWhere = branchId ? 'AND branch_id = ?' : '';
+  const params = [stockItemId];
+  if (branchId) params.push(branchId);
   const [[balance]] = await db.query(`
     SELECT
       COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
       COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
     FROM main_stock
     WHERE stock_item_id = ?
-      AND (? IS NULL OR branch_id = ?)
-  `, [stockItemId, branchId, branchId]);
+      ${branchWhere}
+  `, params);
 
   return Math.max(0, Number(balance?.total || 0));
 };

@@ -228,14 +228,17 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       for (const ing of ings) {
         const neededQty = Number(ing.qty_per_unit) * Number(item.qty);
 
+        const branchWhere = branchId ? 'AND branch_id = ?' : '';
+        const balanceParams = [ing.stock_item_id];
+        if (branchId) balanceParams.push(branchId);
         const [[balance]] = await conn.query(`
           SELECT
             COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
             COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
           FROM main_stock
           WHERE stock_item_id = ?
-            AND (? IS NULL OR branch_id = ?)
-        `, [ing.stock_item_id, branchId || null, branchId || null]);
+            ${branchWhere}
+        `, balanceParams);
 
         const remainingApproved = Number(balance.total);
         
