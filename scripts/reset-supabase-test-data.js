@@ -203,9 +203,9 @@ const reset = async () => {
           : 120;
         await client.query(`
           insert into main_stock
-            (stock_item_id, qty, cost_per_unit, total_cost, type, source, note, branch_id, created_by)
-          values ($1, $2, $3, $4, 'in', 'purchase', 'Saldo awal testing cabang', $5, (select id from users order by id limit 1))
-        `, [item.id, qty, item.price, qty * item.price, branchId]);
+            (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
+          values ($1, $2, $3, 'in', 'purchase', 'Saldo awal testing cabang', $4, (select id from users order by id limit 1))
+        `, [item.id, qty, item.price, branchId]);
       }
     }
 
