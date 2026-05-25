@@ -1,0 +1,587 @@
+const crypto = require('crypto');
+const db = require('../config/db');
+const { createTransaction } = require('../services/transactionService');
+
+const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
+const STAFF_ORDER_STATUSES = ['accepted', 'preparing', 'ready', 'completed', 'cancelled'];
+const REVIEW_DISCOUNT_RATE = 5;
+
+const makeToken = () => crypto.randomBytes(24).toString('hex');
+const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+
+const toMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+const normalizeTablePayload = (body) => ({
+  table_number: String(body.table_number || '').trim(),
+  table_name: body.table_name ? String(body.table_name).trim() : null,
+  capacity: Math.max(1, Number(body.capacity || 2)),
+  status: ['active', 'maintenance', 'inactive'].includes(body.status) ? body.status : 'active',
+  note: body.note ? String(body.note).trim() : null,
+});
+
+const attachOrderDetails = async (order) => {
+  if (!order) return null;
+
+  const [items] = await db.query(`
+    SELECT coi.*, p.image_url, c.name AS category_name
+    FROM customer_order_items coi
+    LEFT JOIN products p ON p.id = coi.product_id
+    LEFT JOIN categories c ON c.id = p.category_id
+    WHERE coi.order_id = ?
+    ORDER BY coi.id ASC
+  `, [order.id]);
+
+  const [serviceReviews] = await db.query(
+    'SELECT * FROM customer_order_reviews WHERE order_id = ? LIMIT 1',
+    [order.id]
+  );
+  const [itemReviews] = await db.query(
+    'SELECT * FROM customer_order_item_reviews WHERE order_id = ?',
+    [order.id]
+  );
+
+  const reviewByItemId = itemReviews.reduce((acc, review) => {
+    acc[review.order_item_id] = review;
+    return acc;
+  }, {});
+
+  return {
+    ...order,
+    items: items.map((item) => ({
+      ...item,
+      review: reviewByItemId[item.id] || null,
+    })),
+    service_review: serviceReviews[0] || null,
+  };
+};
+
+const getOrderRowByCode = async (orderCode) => {
+  const [rows] = await db.query(`
+    SELECT co.*, dt.table_number, dt.table_name
+    FROM customer_orders co
+    JOIN dining_tables dt ON dt.id = co.table_id
+    WHERE co.order_code = ?
+    LIMIT 1
+  `, [orderCode]);
+  return rows[0] || null;
+};
+
+const getOrderRowById = async (id) => {
+  const [rows] = await db.query(`
+    SELECT co.*, dt.table_number, dt.table_name
+    FROM customer_orders co
+    JOIN dining_tables dt ON dt.id = co.table_id
+    WHERE co.id = ?
+    LIMIT 1
+  `, [id]);
+  return rows[0] || null;
+};
+
+const buildPublicMenu = async () => {
+  const [products] = await db.query(`
+    SELECT p.*, c.name AS category_name
+    FROM products p
+    LEFT JOIN categories c ON p.category_id = c.id
+    ORDER BY c.name ASC, p.name ASC
+  `);
+
+  for (const product of products) {
+    const [ingredients] = await db.query(`
+      SELECT pi.qty, si.id AS stock_item_id, si.name AS ingredient_name, si.unit
+      FROM product_ingredients pi
+      JOIN stock_items si ON pi.stock_item_id = si.id
+      WHERE pi.product_id = ?
+    `, [product.id]);
+
+    product.ingredients = ingredients;
+
+    if (!ingredients.length) {
+      product.stock = 0;
+      continue;
+    }
+
+    let canMake = Infinity;
+    for (const ingredient of ingredients) {
+      const [[approved]] = await db.query(`
+        SELECT COALESCE(SUM(sri.qty_approved), 0) AS total
+        FROM stock_requests sr
+        JOIN stock_request_items sri ON sri.request_id = sr.id
+        WHERE sr.status = 'approved'
+          AND sri.stock_item_id = ?
+          AND sri.qty_approved IS NOT NULL
+      `, [ingredient.stock_item_id]);
+
+      const [[used]] = await db.query(`
+        SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
+        FROM transaction_items ti
+        JOIN product_ingredients pi
+          ON pi.product_id = ti.product_id
+          AND pi.stock_item_id = ?
+      `, [ingredient.stock_item_id]);
+
+      const remaining = Math.max(0, Number(approved.total) - Number(used.total));
+      canMake = Math.min(canMake, Math.floor(remaining / Number(ingredient.qty || 1)));
+    }
+
+    product.stock = canMake === Infinity ? 0 : canMake;
+  }
+
+  return products;
+};
+
+const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSourceUserId }) => {
+  if (order.transaction_id) return { transaction_id: order.transaction_id, reused: true };
+
+  const [items] = await db.query(
+    'SELECT product_id, price, qty FROM customer_order_items WHERE order_id = ? ORDER BY id ASC',
+    [order.id]
+  );
+
+  const [users] = await db.query("SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC");
+  const candidateIds = [
+    requestedSourceUserId,
+    actorUserId,
+    ...users.map((user) => user.id),
+  ]
+    .filter(Boolean)
+    .map((id) => Number(id));
+
+  const uniqueCandidateIds = [...new Set(candidateIds)];
+  let lastError = null;
+
+  for (const sourceUserId of uniqueCandidateIds) {
+    try {
+      return await createTransaction({
+        items: items.map((item) => ({
+          product_id: item.product_id,
+          price: Number(item.price),
+          qty: Number(item.qty),
+        })),
+        payment_method: 'cash',
+        userId: actorUserId,
+        sourceUserId,
+      });
+    } catch (err) {
+      lastError = err;
+      if (!err.validation_errors) throw err;
+    }
+  }
+
+  const err = new Error('Stok semua kasir belum cukup untuk menerima pesanan ini');
+  err.status_code = 400;
+  err.validation_errors = lastError?.validation_errors || [];
+  throw err;
+};
+
+exports.listPublicTables = async (req, res) => {
+  try {
+    const orderBy = db.isPostgres
+      ? 'table_number ASC'
+      : 'CAST(table_number AS UNSIGNED), table_number';
+    const [rows] = await db.query(`
+      SELECT id, table_number, table_name, capacity, qr_token, status
+      FROM dining_tables
+      WHERE status = 'active'
+      ORDER BY ${orderBy}
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getPublicTableByToken = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT id, table_number, table_name, capacity, qr_token, status
+      FROM dining_tables
+      WHERE qr_token = ? AND status = 'active'
+      LIMIT 1
+    `, [req.params.token]);
+
+    if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getPublicMenu = async (req, res) => {
+  try {
+    const products = await buildPublicMenu();
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.createOrder = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    const { table_token, customer_name, customer_phone, note, items } = req.body;
+
+    if (!table_token) return res.status(400).json({ message: 'Token meja wajib diisi' });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Pesanan belum memiliki menu' });
+    }
+
+    const [tables] = await conn.query(
+      "SELECT * FROM dining_tables WHERE qr_token = ? AND status = 'active' LIMIT 1",
+      [table_token]
+    );
+    if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau tidak aktif' });
+
+    await conn.beginTransaction();
+
+    const orderItems = [];
+    let subtotal = 0;
+
+    for (const rawItem of items) {
+      const qty = Math.max(1, Number(rawItem.qty || 1));
+      const [products] = await conn.query('SELECT id, name, price FROM products WHERE id = ? LIMIT 1', [rawItem.product_id]);
+      if (!products.length) {
+        const err = new Error(`Menu dengan ID ${rawItem.product_id} tidak ditemukan`);
+        err.status_code = 400;
+        throw err;
+      }
+
+      const product = products[0];
+      const price = Number(product.price);
+      const lineSubtotal = toMoney(price * qty);
+      subtotal += lineSubtotal;
+      orderItems.push({
+        product_id: product.id,
+        product_name: product.name,
+        price,
+        qty,
+        subtotal: lineSubtotal,
+        note: rawItem.note ? String(rawItem.note).trim() : null,
+      });
+    }
+
+    subtotal = toMoney(subtotal);
+    const orderCode = makeOrderCode();
+    const [orderResult] = await conn.query(`
+      INSERT INTO customer_orders
+        (order_code, table_id, customer_name, customer_phone, subtotal, final_total, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      orderCode,
+      tables[0].id,
+      customer_name ? String(customer_name).trim() : null,
+      customer_phone ? String(customer_phone).trim() : null,
+      subtotal,
+      subtotal,
+      note ? String(note).trim() : null,
+    ]);
+
+    const orderId = orderResult.insertId;
+    for (const item of orderItems) {
+      await conn.query(`
+        INSERT INTO customer_order_items
+          (order_id, product_id, product_name, price, qty, subtotal, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [orderId, item.product_id, item.product_name, item.price, item.qty, item.subtotal, item.note]);
+    }
+
+    await conn.commit();
+
+    const order = await attachOrderDetails(await getOrderRowByCode(orderCode));
+    res.status(201).json({
+      message: 'Pesanan berhasil dikirim ke kasir',
+      data: order,
+    });
+  } catch (err) {
+    await conn.rollback();
+    res.status(err.status_code || 500).json({
+      message: err.message,
+      validation_errors: err.validation_errors || undefined,
+    });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.getOrderByCode = async (req, res) => {
+  try {
+    const order = await getOrderRowByCode(req.params.orderCode);
+    if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    res.json(await attachOrderDetails(order));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.submitReview = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    const order = await getOrderRowByCode(req.params.orderCode);
+    if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    if (order.status !== 'completed') {
+      return res.status(400).json({ message: 'Review hanya bisa diberikan setelah pesanan selesai' });
+    }
+    if (order.reviewed_at) {
+      return res.status(400).json({ message: 'Pesanan ini sudah direview' });
+    }
+
+    const serviceRating = Number(req.body.service_rating);
+    const itemReviews = Array.isArray(req.body.items) ? req.body.items : [];
+    if (serviceRating < 1 || serviceRating > 5) {
+      return res.status(400).json({ message: 'Rating pelayanan wajib 1 sampai 5' });
+    }
+
+    const [orderItems] = await conn.query('SELECT * FROM customer_order_items WHERE order_id = ?', [order.id]);
+    if (itemReviews.length < orderItems.length) {
+      return res.status(400).json({ message: 'Semua menu yang dipesan wajib direview untuk mendapat diskon' });
+    }
+
+    await conn.beginTransaction();
+
+    await conn.query(`
+      INSERT INTO customer_order_reviews (order_id, service_rating, service_comment)
+      VALUES (?, ?, ?)
+    `, [order.id, serviceRating, req.body.service_comment ? String(req.body.service_comment).trim() : null]);
+
+    const itemById = new Map(orderItems.map((item) => [Number(item.id), item]));
+    for (const review of itemReviews) {
+      const orderItemId = Number(review.order_item_id);
+      const orderItem = itemById.get(orderItemId);
+      const rating = Number(review.rating);
+      if (!orderItem || rating < 1 || rating > 5) {
+        const err = new Error('Review menu tidak valid');
+        err.status_code = 400;
+        throw err;
+      }
+
+      await conn.query(`
+        INSERT INTO customer_order_item_reviews
+          (order_id, order_item_id, product_id, rating, comment)
+        VALUES (?, ?, ?, ?, ?)
+      `, [
+        order.id,
+        orderItemId,
+        orderItem.product_id,
+        rating,
+        review.comment ? String(review.comment).trim() : null,
+      ]);
+    }
+
+    const discountAmount = toMoney(Number(order.subtotal) * (REVIEW_DISCOUNT_RATE / 100));
+    const finalTotal = toMoney(Number(order.subtotal) - discountAmount);
+
+    await conn.query(`
+      UPDATE customer_orders
+      SET discount_rate = ?,
+          discount_amount = ?,
+          final_total = ?,
+          reviewed_at = NOW()
+      WHERE id = ?
+    `, [REVIEW_DISCOUNT_RATE, discountAmount, finalTotal, order.id]);
+
+    if (order.transaction_id) {
+      await conn.query('UPDATE transactions SET total_price = ? WHERE id = ?', [finalTotal, order.transaction_id]);
+    }
+
+    await conn.commit();
+
+    const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
+    res.json({
+      message: 'Terima kasih atas review Anda. Diskon 5% sudah diterapkan.',
+      discount_rate: REVIEW_DISCOUNT_RATE,
+      discount_amount: discountAmount,
+      data: updated,
+    });
+  } catch (err) {
+    await conn.rollback();
+    res.status(err.status_code || 500).json({ message: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.listManagedTables = async (req, res) => {
+  try {
+    const [rows] = await db.query(`
+      SELECT
+        dt.id,
+        dt.table_number,
+        dt.table_name,
+        dt.capacity,
+        dt.qr_token,
+        dt.status,
+        dt.note,
+        dt.created_by,
+        dt.created_at,
+        dt.updated_at,
+        COUNT(co.id) AS total_orders,
+        SUM(CASE WHEN co.status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) AS active_orders
+      FROM dining_tables dt
+      LEFT JOIN customer_orders co ON co.table_id = dt.id
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.note, dt.created_by, dt.created_at, dt.updated_at
+      ORDER BY dt.table_number ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.createTable = async (req, res) => {
+  try {
+    const payload = normalizeTablePayload(req.body);
+    if (!payload.table_number) return res.status(400).json({ message: 'Nomor meja wajib diisi' });
+
+    const [result] = await db.query(`
+      INSERT INTO dining_tables
+        (table_number, table_name, capacity, qr_token, status, note, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      payload.table_number,
+      payload.table_name,
+      payload.capacity,
+      makeToken(),
+      payload.status,
+      payload.note,
+      req.user?.id || null,
+    ]);
+
+    const [rows] = await db.query('SELECT * FROM dining_tables WHERE id = ?', [result.insertId]);
+    res.status(201).json({ message: 'Meja berhasil dibuat', data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updateTable = async (req, res) => {
+  try {
+    const payload = normalizeTablePayload(req.body);
+    if (!payload.table_number) return res.status(400).json({ message: 'Nomor meja wajib diisi' });
+
+    const params = [
+      payload.table_number,
+      payload.table_name,
+      payload.capacity,
+      payload.status,
+      payload.note,
+    ];
+    let tokenSql = '';
+    if (req.body.regenerateToken) {
+      tokenSql = ', qr_token = ?';
+      params.push(makeToken());
+    }
+    params.push(req.params.id);
+
+    const [result] = await db.query(`
+      UPDATE dining_tables
+      SET table_number = ?, table_name = ?, capacity = ?, status = ?, note = ?${tokenSql}
+      WHERE id = ?
+    `, params);
+
+    if (!result.affectedRows) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+    const [rows] = await db.query('SELECT * FROM dining_tables WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Meja berhasil diupdate', data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.deleteTable = async (req, res) => {
+  try {
+    const [result] = await db.query("UPDATE dining_tables SET status = 'inactive' WHERE id = ?", [req.params.id]);
+    if (!result.affectedRows) return res.status(404).json({ message: 'Meja tidak ditemukan' });
+    res.json({ message: 'Meja dinonaktifkan' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.listOrders = async (req, res) => {
+  try {
+    const { status, limit = 80 } = req.query;
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    if (status && VALID_ORDER_STATUSES.includes(status)) {
+      where += ' AND co.status = ?';
+      params.push(status);
+    }
+
+    params.push(Number(limit));
+    const [orders] = await db.query(`
+      SELECT co.*, dt.table_number, dt.table_name,
+        u1.name AS accepted_by_name,
+        u2.name AS completed_by_name
+      FROM customer_orders co
+      JOIN dining_tables dt ON dt.id = co.table_id
+      LEFT JOIN users u1 ON u1.id = co.accepted_by
+      LEFT JOIN users u2 ON u2.id = co.completed_by
+      ${where}
+      ORDER BY co.created_at DESC
+      LIMIT ?
+    `, params);
+
+    const detailedOrders = [];
+    for (const order of orders) {
+      detailedOrders.push(await attachOrderDetails(order));
+    }
+
+    res.json(detailedOrders);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.updateOrderStatus = async (req, res) => {
+  try {
+    const nextStatus = req.body.status;
+    if (!STAFF_ORDER_STATUSES.includes(nextStatus)) {
+      return res.status(400).json({ message: 'Status pesanan tidak valid' });
+    }
+
+    const order = await getOrderRowById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
+
+    let transactionResult = null;
+    const shouldFulfill = ['accepted', 'preparing', 'ready', 'completed'].includes(nextStatus);
+    if (shouldFulfill && !order.transaction_id) {
+      transactionResult = await resolveFulfillmentTransaction({
+        order,
+        actorUserId: req.user.id,
+        requestedSourceUserId: req.body.source_user_id || null,
+      });
+    }
+
+    const updates = ['status = ?'];
+    const params = [nextStatus];
+
+    if (transactionResult?.transaction_id) {
+      updates.push('transaction_id = ?');
+      params.push(transactionResult.transaction_id);
+    }
+
+    if (nextStatus === 'accepted' || (shouldFulfill && !order.accepted_by)) {
+      updates.push('accepted_by = ?', 'accepted_at = NOW()');
+      params.push(req.user.id);
+    }
+
+    if (nextStatus === 'completed') {
+      updates.push('completed_by = ?', 'completed_at = NOW()', "payment_status = 'paid'");
+      params.push(req.user.id);
+    }
+
+    params.push(order.id);
+    await db.query(`UPDATE customer_orders SET ${updates.join(', ')} WHERE id = ?`, params);
+
+    const updated = await attachOrderDetails(await getOrderRowById(order.id));
+    res.json({
+      message: 'Status pesanan berhasil diperbarui',
+      data: updated,
+    });
+  } catch (err) {
+    res.status(err.status_code || 500).json({
+      message: err.message,
+      validation_errors: err.validation_errors || undefined,
+    });
+  }
+};

@@ -45,6 +45,7 @@ app.use('/api/stock-requests', require('./routes/stockRequests'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/ai-chat', require('./routes/aiChat'));
 app.use('/api/ai', require('./routes/aiData'));
+app.use('/api/customer', require('./routes/customerOrders'));
 
 app.use((req, res) => res.status(404).json({ message: 'Endpoint tidak ditemukan' }));
 app.use((err, req, res, next) => {

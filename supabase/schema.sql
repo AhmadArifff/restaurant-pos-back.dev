@@ -27,6 +27,18 @@ DO $$ BEGIN
   CREATE TYPE stock_request_status AS ENUM ('pending', 'approved', 'rejected');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  CREATE TYPE dining_table_status AS ENUM ('active', 'maintenance', 'inactive');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE customer_order_status AS ENUM ('pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE customer_payment_status AS ENUM ('unpaid', 'paid');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 create table if not exists users (
   id bigserial primary key,
   name varchar(100) not null,
@@ -170,6 +182,71 @@ create table if not exists stock_request_audit (
   created_at timestamptz default now()
 );
 
+create table if not exists dining_tables (
+  id bigserial primary key,
+  table_number varchar(30) unique not null,
+  table_name varchar(100) null,
+  capacity integer not null default 2,
+  qr_token varchar(80) unique not null,
+  status dining_table_status not null default 'active',
+  note text null,
+  created_by bigint null references users(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists customer_orders (
+  id bigserial primary key,
+  order_code varchar(50) unique not null,
+  table_id bigint not null references dining_tables(id),
+  customer_name varchar(120) null,
+  customer_phone varchar(40) null,
+  subtotal numeric(12,2) not null default 0,
+  discount_rate numeric(5,2) not null default 0,
+  discount_amount numeric(12,2) not null default 0,
+  final_total numeric(12,2) not null default 0,
+  status customer_order_status not null default 'pending',
+  payment_status customer_payment_status not null default 'unpaid',
+  transaction_id bigint null references transactions(id) on delete set null,
+  note text null,
+  reviewed_at timestamptz null,
+  accepted_by bigint null references users(id) on delete set null,
+  accepted_at timestamptz null,
+  completed_by bigint null references users(id) on delete set null,
+  completed_at timestamptz null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists customer_order_items (
+  id bigserial primary key,
+  order_id bigint not null references customer_orders(id) on delete cascade,
+  product_id bigint not null references products(id),
+  product_name varchar(150) not null,
+  price numeric(10,2) not null,
+  qty integer not null,
+  subtotal numeric(12,2) not null,
+  note text null
+);
+
+create table if not exists customer_order_reviews (
+  id bigserial primary key,
+  order_id bigint not null unique references customer_orders(id) on delete cascade,
+  service_rating integer not null check (service_rating between 1 and 5),
+  service_comment text null,
+  created_at timestamptz default now()
+);
+
+create table if not exists customer_order_item_reviews (
+  id bigserial primary key,
+  order_id bigint not null references customer_orders(id) on delete cascade,
+  order_item_id bigint not null unique references customer_order_items(id) on delete cascade,
+  product_id bigint not null references products(id),
+  rating integer not null check (rating between 1 and 5),
+  comment text null,
+  created_at timestamptz default now()
+);
+
 create index if not exists idx_attendance_date on attendance(date);
 create index if not exists idx_attendance_user_date on attendance(user_id, date);
 create index if not exists idx_main_stock_type on main_stock(type);
@@ -182,6 +259,12 @@ create index if not exists idx_website_settings_setting_key on website_settings(
 create index if not exists idx_stock_request_audit_request_id on stock_request_audit(request_id);
 create index if not exists idx_stock_request_audit_action on stock_request_audit(action);
 create index if not exists idx_stock_request_audit_created_at on stock_request_audit(created_at);
+create index if not exists idx_dining_tables_status on dining_tables(status);
+create index if not exists idx_dining_tables_qr_token on dining_tables(qr_token);
+create index if not exists idx_customer_orders_status on customer_orders(status);
+create index if not exists idx_customer_orders_table_id on customer_orders(table_id);
+create index if not exists idx_customer_orders_created_at on customer_orders(created_at);
+create index if not exists idx_customer_order_items_order_id on customer_order_items(order_id);
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -195,3 +278,23 @@ drop trigger if exists set_website_settings_updated_at on website_settings;
 create trigger set_website_settings_updated_at
 before update on website_settings
 for each row execute function set_updated_at();
+
+drop trigger if exists set_dining_tables_updated_at on dining_tables;
+create trigger set_dining_tables_updated_at
+before update on dining_tables
+for each row execute function set_updated_at();
+
+drop trigger if exists set_customer_orders_updated_at on customer_orders;
+create trigger set_customer_orders_updated_at
+before update on customer_orders
+for each row execute function set_updated_at();
+
+insert into dining_tables (table_number, table_name, capacity, qr_token, status)
+select
+  lpad(gs::text, 2, '0'),
+  'Meja ' || gs::text,
+  case when gs <= 4 then 2 else 4 end,
+  encode(gen_random_bytes(24), 'hex'),
+  'active'
+from generate_series(1, 8) as gs
+where not exists (select 1 from dining_tables limit 1);

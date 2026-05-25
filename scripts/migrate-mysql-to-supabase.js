@@ -21,6 +21,11 @@ const TABLES = [
   'main_stock',
   'website_settings',
   'stock_request_audit',
+  'dining_tables',
+  'customer_orders',
+  'customer_order_items',
+  'customer_order_reviews',
+  'customer_order_item_reviews',
 ];
 
 const TABLE_COLUMN_EXCLUDES = {
@@ -105,8 +110,16 @@ const migrate = async () => {
 
   try {
     for (const table of TABLES) {
-      const [rows] = await mysqlConn.query(`SELECT * FROM \`${table}\``);
-      await upsertRows(pg, table, rows);
+      try {
+        const [rows] = await mysqlConn.query(`SELECT * FROM \`${table}\``);
+        await upsertRows(pg, table, rows);
+      } catch (error) {
+        if (error.code === 'ER_NO_SUCH_TABLE') {
+          console.log(`- ${table}: tabel belum ada di MySQL, dilewati`);
+          continue;
+        }
+        throw error;
+      }
     }
 
     console.log('\nMigrasi data MySQL ke Supabase selesai.');
