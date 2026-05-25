@@ -74,7 +74,7 @@ Backend memiliki adapter PostgreSQL dasar agar pola `db.query(sql, params)` teta
 
 ## 7. Vercel Backend
 
-Backend Express diexport melalui `api/index.js`, dan `vercel.json` merutekan semua request ke function tersebut.
+Backend Express sudah diexport dari `src/index.js`, sehingga deploy di Vercel bisa memakai zero-config tanpa `vercel.json` khusus. Endpoint tetap memakai prefix `/api/...` sesuai route Express.
 
 Smoke test setelah deploy:
 
