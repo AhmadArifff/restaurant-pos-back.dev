@@ -47,9 +47,14 @@ const escapePgValue = (value) => {
 
 const createPostgresPool = () => {
   const { Pool } = require('pg');
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  databaseUrl.searchParams.delete('sslmode');
+  databaseUrl.searchParams.delete('sslcert');
+  databaseUrl.searchParams.delete('sslkey');
+  databaseUrl.searchParams.delete('sslrootcert');
 
   const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: databaseUrl.toString(),
     ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
     max: Number(process.env.DB_POOL_MAX || 5),
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 10000),

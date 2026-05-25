@@ -7,7 +7,7 @@ values (
   'restaurant-pos-assets',
   true,
   5242880,
-  array['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon']
+  array['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml']
 )
 on conflict (id) do update set
   public = excluded.public,

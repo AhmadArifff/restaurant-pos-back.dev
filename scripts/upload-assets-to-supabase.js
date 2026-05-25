@@ -25,6 +25,15 @@ if (shouldUpdateDb && !databaseUrl) {
   process.exit(1);
 }
 
+const getPostgresConnectionString = (connectionString) => {
+  const url = new URL(connectionString);
+  url.searchParams.delete('sslmode');
+  url.searchParams.delete('sslcert');
+  url.searchParams.delete('sslkey');
+  url.searchParams.delete('sslrootcert');
+  return url.toString();
+};
+
 const supabase = createClient(supabaseUrl, serviceKey, {
   auth: {
     persistSession: false,
@@ -53,6 +62,7 @@ const contentTypeFor = (filePath) => {
   if (ext === '.gif') return 'image/gif';
   if (ext === '.webp') return 'image/webp';
   if (ext === '.ico') return 'image/x-icon';
+  if (ext === '.svg') return 'image/svg+xml';
   return 'application/octet-stream';
 };
 
@@ -60,7 +70,7 @@ const updateDatabaseUrls = async (mapping) => {
   if (!shouldUpdateDb) return;
 
   const pg = new Pool({
-    connectionString: databaseUrl,
+    connectionString: getPostgresConnectionString(databaseUrl),
     ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
   });
 

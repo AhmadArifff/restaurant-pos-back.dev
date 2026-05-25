@@ -23,6 +23,10 @@ const TABLES = [
   'stock_request_audit',
 ];
 
+const TABLE_COLUMN_EXCLUDES = {
+  main_stock: ['total_cost'],
+};
+
 const quoteIdent = (value) => `"${String(value).replace(/"/g, '""')}"`;
 
 const mysqlConnectionConfig = {
@@ -40,13 +44,26 @@ if (!postgresConnectionString) {
   process.exit(1);
 }
 
+const getPostgresConnectionString = (connectionString) => {
+  const url = new URL(connectionString);
+  url.searchParams.delete('sslmode');
+  url.searchParams.delete('sslcert');
+  url.searchParams.delete('sslkey');
+  url.searchParams.delete('sslrootcert');
+  return url.toString();
+};
+
 const upsertRows = async (pg, table, rows) => {
   if (!rows.length) {
     console.log(`- ${table}: kosong, dilewati`);
     return;
   }
 
-  const columns = Object.keys(rows[0]).filter((column) => rows.some((row) => row[column] !== undefined));
+  const excludedColumns = new Set(TABLE_COLUMN_EXCLUDES[table] || []);
+  const columns = Object.keys(rows[0]).filter((column) => {
+    if (excludedColumns.has(column)) return false;
+    return rows.some((row) => row[column] !== undefined);
+  });
   const insertColumns = columns.map(quoteIdent).join(', ');
   const updates = columns
     .filter((column) => column !== 'id')
@@ -82,7 +99,7 @@ const upsertRows = async (pg, table, rows) => {
 const migrate = async () => {
   const mysqlConn = await mysql.createConnection(mysqlConnectionConfig);
   const pg = new Pool({
-    connectionString: postgresConnectionString,
+    connectionString: getPostgresConnectionString(postgresConnectionString),
     ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
   });
 
