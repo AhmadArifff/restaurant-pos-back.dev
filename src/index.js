@@ -5,8 +5,25 @@ require('dotenv').config();
 
 const app = express();
 
+const normalizeOrigin = (origin) => String(origin || '').replace(/\/+$/, '');
+const allowedOrigins = new Set([
+  normalizeOrigin(process.env.FRONTEND_URL),
+  ...String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(normalizeOrigin)
+    .filter(Boolean),
+  'https://restaurant-pos-dev.vercel.app',
+  'https://restaurant-pos.dev.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || true,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.has(normalizeOrigin(origin))) return callback(null, true);
+    return callback(new Error(`CORS origin not allowed: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(express.json());
