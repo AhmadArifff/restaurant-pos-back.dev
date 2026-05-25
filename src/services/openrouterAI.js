@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { resolveAiDataContext } = require('../controllers/aiDataController');
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_FALLBACK_MODEL = 'openrouter/free';
@@ -552,12 +553,14 @@ function buildDirectBusinessResponse(userMessage, contextData, intentText = user
 async function fetchContextData(userMessage) {
   const lowerMessage = userMessage.toLowerCase();
   const tasks = [];
-  const addContextTask = (url, label) => {
+  const addContextTask = (context, label, query = {}) => {
     tasks.push(
-      axios
-        .get(url)
-        .then((res) => (res.data?.success ? { label, value: res.data.data } : null))
-        .catch(() => null)
+      resolveAiDataContext(context, query)
+        .then((data) => (data ? { label, value: data } : null))
+        .catch((error) => {
+          console.warn(`[AI Context] Gagal memuat ${context}:`, error.message);
+          return null;
+        })
     );
   };
 
@@ -579,7 +582,7 @@ async function fetchContextData(userMessage) {
     lowerMessage.includes('untung');
 
   if (needsSales) {
-    addContextTask('http://localhost:5000/api/ai/data?context=sales&days=30', 'Ringkasan penjualan 30 hari terakhir');
+    addContextTask('sales', 'Ringkasan penjualan 30 hari terakhir', { days: 30 });
   }
 
   const needsStaffPerformance =
@@ -608,7 +611,7 @@ async function fetchContextData(userMessage) {
     );
 
   if (needsStaffPerformance) {
-    addContextTask('http://localhost:5000/api/ai/data?context=staff-performance', 'Performa penjualan karyawan bulan ini');
+    addContextTask('staff-performance', 'Performa penjualan karyawan bulan ini');
   }
 
   const needsStock =
@@ -623,9 +626,9 @@ async function fetchContextData(userMessage) {
     lowerMessage.includes('pesan');
 
   if (needsStock) {
-    addContextTask('http://localhost:5000/api/ai/data?context=stock-overview', 'Ringkasan stok bahan saat ini');
-    addContextTask('http://localhost:5000/api/ai/data?context=low-stock', 'Bahan yang perlu perhatian');
-    addContextTask('http://localhost:5000/api/ai/data?context=stock-movements&limit=20', 'Aktivitas stok masuk dan keluar terbaru');
+    addContextTask('stock-overview', 'Ringkasan stok bahan saat ini');
+    addContextTask('low-stock', 'Bahan yang perlu perhatian');
+    addContextTask('stock-movements', 'Aktivitas stok masuk dan keluar terbaru', { limit: 20 });
   }
 
   if (
@@ -635,7 +638,7 @@ async function fetchContextData(userMessage) {
     lowerMessage.includes('diambil') ||
     lowerMessage.includes('request stok')
   ) {
-    addContextTask('http://localhost:5000/api/ai/data?context=stock-requests&limit=30', 'Pengajuan stok kasir terbaru');
+    addContextTask('stock-requests', 'Pengajuan stok kasir terbaru', { limit: 30 });
   }
 
   if (
@@ -648,15 +651,15 @@ async function fetchContextData(userMessage) {
     lowerMessage.includes('margin') ||
     lowerMessage.includes('profit')
   ) {
-    addContextTask('http://localhost:5000/api/ai/data?context=best-selling&limit=10', 'Produk terlaris');
+    addContextTask('best-selling', 'Produk terlaris', { limit: 10 });
   }
 
   if (lowerMessage.includes('transaksi') || lowerMessage.includes('penjualan terakhir')) {
-    addContextTask('http://localhost:5000/api/ai/data?context=transactions&limit=10', 'Transaksi terbaru');
+    addContextTask('transactions', 'Transaksi terbaru', { limit: 10 });
   }
 
   if (lowerMessage.includes('absen') || lowerMessage.includes('kehadiran') || lowerMessage.includes('staff')) {
-    addContextTask('http://localhost:5000/api/ai/data?context=attendance', 'Kehadiran tim hari ini');
+    addContextTask('attendance', 'Kehadiran tim hari ini');
   }
 
   if (tasks.length === 0) return null;

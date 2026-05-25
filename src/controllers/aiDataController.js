@@ -5,6 +5,43 @@
 
 const db = require('../config/db');
 
+async function resolveAiDataContext(context, query = {}) {
+  switch (String(context || '').toLowerCase()) {
+    case 'low-stock':
+      return getLowStockItems();
+
+    case 'stock-overview':
+      return getStockOverview();
+
+    case 'stock-movements':
+      return getRecentStockMovements(query.limit || 10);
+
+    case 'stock-requests':
+      return getStockRequestSummary(query.limit || 20);
+
+    case 'sales':
+      return getSalesData(query.days || 7);
+
+    case 'staff-performance':
+      return getStaffPerformanceSummary(query);
+
+    case 'best-selling':
+      return getBestSellingProducts(query.limit || 10);
+
+    case 'products':
+      return getAllProducts();
+
+    case 'transactions':
+      return getRecentTransactions(query.limit || 10);
+
+    case 'attendance':
+      return getTodayAttendance();
+
+    default:
+      return null;
+  }
+}
+
 /**
  * GET /api/ai/data
  * Fetch data berdasarkan context dari user query
@@ -24,53 +61,13 @@ exports.getDataByContext = async (req, res) => {
     let data = null;
 
     try {
-      switch (context.toLowerCase()) {
-        case 'low-stock':
-          data = await getLowStockItems();
-          break;
-
-        case 'stock-overview':
-          data = await getStockOverview();
-          break;
-
-        case 'stock-movements':
-          data = await getRecentStockMovements(limit);
-          break;
-
-        case 'stock-requests':
-          data = await getStockRequestSummary(limit);
-          break;
-
-        case 'sales':
-          data = await getSalesData(days);
-          break;
-
-        case 'staff-performance':
-          data = await getStaffPerformanceSummary(req.query);
-          break;
-
-        case 'best-selling':
-          data = await getBestSellingProducts(limit);
-          break;
-
-        case 'products':
-          data = await getAllProducts();
-          break;
-
-        case 'transactions':
-          data = await getRecentTransactions(limit);
-          break;
-
-        case 'attendance':
-          data = await getTodayAttendance();
-          break;
-
-        default:
-          return res.status(400).json({
-            success: false,
-            message: `Context '${context}' tidak dikenali`,
-            validContexts: ['low-stock', 'stock-overview', 'stock-movements', 'stock-requests', 'sales', 'staff-performance', 'best-selling', 'products', 'transactions', 'attendance'],
-          });
+      data = await resolveAiDataContext(context, req.query);
+      if (!data) {
+        return res.status(400).json({
+          success: false,
+          message: `Context '${context}' tidak dikenali`,
+          validContexts: ['low-stock', 'stock-overview', 'stock-movements', 'stock-requests', 'sales', 'staff-performance', 'best-selling', 'products', 'transactions', 'attendance'],
+        });
       }
     } catch (queryError) {
       console.error(`Query error for context '${context}':`, queryError);
@@ -97,6 +94,8 @@ exports.getDataByContext = async (req, res) => {
     });
   }
 };
+
+exports.resolveAiDataContext = resolveAiDataContext;
 
 /**
  * Get low stock items (stock <= min_stock)
@@ -515,7 +514,7 @@ async function getSalesData(days = 7) {
       };
     }
 
-    const totalSales = results.reduce((sum, row) => sum + (row.total_sales || 0), 0);
+    const totalSales = results.reduce((sum, row) => sum + Number(row.total_sales || 0), 0);
     const totalTransactions = results.reduce((sum, row) => sum + (row.transaction_count || 0), 0);
 
     return {
