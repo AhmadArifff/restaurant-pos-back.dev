@@ -102,7 +102,18 @@ const upsertRows = async (pg, table, rows) => {
 };
 
 const migrate = async () => {
-  const mysqlConn = await mysql.createConnection(mysqlConnectionConfig);
+  let mysqlConn;
+  try {
+    mysqlConn = await mysql.createConnection(mysqlConnectionConfig);
+  } catch (error) {
+    if (error.code === 'ECONNREFUSED') {
+      console.error(
+        'MySQL lokal tidak bisa dihubungi. Nyalakan MySQL/XAMPP dulu jika ingin migrasi data lama, ' +
+        'atau jalankan "npm run schema:supabase" jika hanya ingin membuat/update tabel Supabase.'
+      );
+    }
+    throw error;
+  }
   const pg = new Pool({
     connectionString: getPostgresConnectionString(postgresConnectionString),
     ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
@@ -124,7 +135,7 @@ const migrate = async () => {
 
     console.log('\nMigrasi data MySQL ke Supabase selesai.');
   } finally {
-    await mysqlConn.end();
+    await mysqlConn?.end();
     await pg.end();
   }
 };
