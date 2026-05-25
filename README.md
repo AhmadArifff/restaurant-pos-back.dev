@@ -15,6 +15,8 @@ Backend REST API untuk aplikasi Restaurant POS. Project ini menangani autentikas
 - dotenv untuk environment configuration
 - pdfkit untuk export laporan PDF
 - axios untuk integrasi AI/OpenRouter
+- pg untuk koneksi Supabase PostgreSQL
+- @supabase/supabase-js untuk Supabase Storage
 - nodemon untuk development server
 
 ## Fitur Utama
@@ -134,7 +136,9 @@ JWT_SECRET=ubah_dengan_secret_yang_kuat
 JWT_EXPIRES=7d
 
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL_FALLBACKS=qwen/qwen3-next-80b-a3b-instruct:free,google/gemma-4-26b-a4b-it:free,meta-llama/llama-3.3-70b-instruct:free,nvidia/nemotron-nano-12b-v2-vl:free,liquid/lfm-2.5-1.2b-thinking:free,liquid/lfm-2.5-1.2b-instruct:free,meta-llama/llama-3.2-3b-instruct:free,nousresearch/hermes-3-llama-3.1-405b:free,qwen/qwen3-coder:free,cognitivecomputations/dolphin-mistral-24b-venice-edition:free
+OPENROUTER_FREE_MODELS=
 OPENROUTER_SITE_URL=http://localhost:3000
 OPENROUTER_SITE_NAME=Kebab POS System
 ```
@@ -142,7 +146,9 @@ OPENROUTER_SITE_NAME=Kebab POS System
 Catatan:
 
 - `OPENROUTER_API_KEY` diperlukan jika ingin memakai AI assistant.
-- `OPENROUTER_MODEL` opsional. Jika kosong, sistem memakai model rekomendasi dari service.
+- `OPENROUTER_MODEL` opsional untuk model utama pertama.
+- `OPENROUTER_MODEL_FALLBACKS` berisi daftar model gratis dipisahkan koma. Jika model utama terkena rate limit/quota/provider error/timeout, backend otomatis mencoba model berikutnya.
+- `OPENROUTER_FREE_MODELS` adalah alias tambahan jika ingin memisahkan daftar model gratis dari fallback utama.
 - Jangan commit file `.env`.
 
 ## Cara Install dan Menjalankan
@@ -361,12 +367,50 @@ http://localhost:5000/images/products/nama-file.jpg
 
 ## Deployment
 
-1. Siapkan database MySQL production.
+### Vercel + Supabase
+
+Project ini sudah disiapkan untuk deployment Vercel dengan Supabase Postgres dan Supabase Storage.
+
+File penting:
+
+- `.env.vercel.example` untuk template environment backend di Vercel.
+- `.env.migration.example` untuk migrasi lokal dari MySQL ke Supabase.
+- `supabase/schema.sql` untuk schema PostgreSQL.
+- `supabase/storage.sql` untuk bucket storage asset image.
+- `supabase/README.md` untuk langkah migrasi lengkap.
+
+Workflow deployment:
+
+1. Jalankan `supabase/schema.sql` di Supabase SQL Editor.
+2. Jalankan `supabase/storage.sql` di Supabase SQL Editor.
+3. Isi environment Vercel menggunakan `.env.vercel.example`.
+4. Jalankan migrasi data dari MySQL lokal ke Supabase dengan `npm run migrate:supabase`.
+5. Upload asset lama ke Supabase Storage dengan `npm run storage:supabase:update-db`.
+6. Deploy backend ke Vercel.
+7. Set frontend `NEXT_PUBLIC_API_URL` ke URL backend Vercel.
+
+Command tambahan:
+
+```bash
+npm run migrate:supabase
+npm run storage:supabase
+npm run storage:supabase:update-db
+```
+
+Catatan keamanan:
+
+- Jangan commit database password, Supabase service role key, JWT secret, atau OpenRouter key.
+- Supabase service role key hanya boleh berada di backend/server environment.
+- Frontend hanya boleh memakai publishable key jika suatu saat dibutuhkan.
+
+### Node Server Biasa
+
+1. Siapkan database MySQL atau PostgreSQL production.
 2. Set environment variable backend.
 3. Jalankan `npm install`.
-4. Jalankan `npm run migrate`.
+4. Untuk MySQL, jalankan `npm run migrate`.
 5. Jalankan `npm run start` atau deploy ke platform Node.js.
-6. Pastikan folder `public/images` dapat menyimpan file upload atau gunakan storage eksternal jika diperlukan.
+6. Untuk Supabase Storage, set `STORAGE_DRIVER=supabase`.
 
 ## Commit Format
 

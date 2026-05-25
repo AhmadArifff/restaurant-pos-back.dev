@@ -6,6 +6,9 @@ pnpm-lock.yaml
 
 # Environment variables
 .env
+.env.vercel
+.env.migration.local
+.env.production
 .env.local
 .env.development.local
 .env.test.local

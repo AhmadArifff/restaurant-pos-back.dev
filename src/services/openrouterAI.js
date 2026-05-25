@@ -125,6 +125,45 @@ const MODEL_MAP = new Map(MODEL_CATALOG.map((model) => [model.id, model]));
 
 const sessionTokenStore = new Map();
 
+function parseModelList(value) {
+  return String(value || '')
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueModelIds(ids) {
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function buildDynamicModelConfig(modelId) {
+  return {
+    id: modelId,
+    name: `${modelId} (custom env)`,
+    provider: modelId.split('/')[0] || 'custom',
+    contextLength: Number(process.env.OPENROUTER_DEFAULT_CONTEXT_LENGTH || 128000),
+    weeklyTokenPool: null,
+    defaultMaxCompletionTokens: Number(process.env.OPENROUTER_DEFAULT_MAX_TOKENS || 1000),
+    chatCapable: true,
+    recommended: false,
+    custom: true,
+  };
+}
+
+function getConfiguredModelIds() {
+  const envModels = [
+    ...parseModelList(process.env.OPENROUTER_MODEL),
+    ...parseModelList(process.env.OPENROUTER_MODEL_FALLBACKS),
+    ...parseModelList(process.env.OPENROUTER_FREE_MODELS),
+  ];
+
+  return uniqueModelIds([
+    ...envModels,
+    DEFAULT_FALLBACK_MODEL,
+    ...MODEL_CATALOG.map((model) => model.id),
+  ]);
+}
+
 function getSessionTokenTracker(sessionId) {
   if (!sessionTokenStore.has(sessionId)) {
     sessionTokenStore.set(sessionId, {
@@ -153,11 +192,16 @@ function getModelConfig(requestedModelId) {
     return MODEL_MAP.get(requestedModelId);
   }
 
-  if (process.env.OPENROUTER_MODEL && MODEL_MAP.has(process.env.OPENROUTER_MODEL)) {
-    return MODEL_MAP.get(process.env.OPENROUTER_MODEL);
+  if (requestedModelId) {
+    return buildDynamicModelConfig(requestedModelId);
   }
 
-  return MODEL_MAP.get(DEFAULT_FALLBACK_MODEL) || MODEL_CATALOG[0];
+  const preferredModelId = getConfiguredModelIds()[0] || DEFAULT_FALLBACK_MODEL;
+  if (MODEL_MAP.has(preferredModelId)) {
+    return MODEL_MAP.get(preferredModelId);
+  }
+
+  return buildDynamicModelConfig(preferredModelId);
 }
 
 function calculateTokenUsageStatus(tokensUsed, tokenLimit, modelConfig) {
@@ -694,24 +738,47 @@ function resolveMaxCompletionTokens({ requestedMaxTokens, modelConfig, tokenStat
 }
 
 function getAvailableChatModels() {
-  return MODEL_CATALOG.map((model) => ({
+  return getConfiguredModelIds().map((modelId, index) => {
+    const model = getModelConfig(modelId);
+    return {
     id: model.id,
     name: model.name,
     provider: model.provider,
     contextLength: model.contextLength,
     weeklyTokenPool: model.weeklyTokenPool,
     chatCapable: model.chatCapable,
-    recommended: model.recommended,
+    recommended: index === 0 || model.recommended,
     disabledReason: model.disabledReason || null,
-  }));
+      custom: Boolean(model.custom),
+    };
+  });
 }
 
-function shouldTryFallback(options, currentModelId) {
-  return !options.fallbackAttempted && currentModelId !== DEFAULT_FALLBACK_MODEL;
+function getFallbackModelId(currentModelId, attemptedModelIds = []) {
+  const attempted = new Set([...attemptedModelIds, currentModelId].filter(Boolean));
+  return getConfiguredModelIds().find((modelId) => !attempted.has(modelId)) || null;
 }
 
-function shouldRetryRouter(options, currentModelId) {
-  return !options.routerRetryAttempted && currentModelId === DEFAULT_FALLBACK_MODEL;
+function shouldFallbackFromProviderError(axiosError) {
+  const status = axiosError.response?.status;
+  if ([402, 408, 409, 429, 500, 502, 503, 504].includes(status)) return true;
+
+  const providerMessage = String(
+    axiosError.response?.data?.error?.message ||
+    axiosError.response?.data?.message ||
+    axiosError.response?.data?.error ||
+    axiosError.message ||
+    ''
+  ).toLowerCase();
+
+  return (
+    providerMessage.includes('rate limit') ||
+    providerMessage.includes('quota') ||
+    providerMessage.includes('insufficient') ||
+    providerMessage.includes('no endpoints') ||
+    providerMessage.includes('overloaded') ||
+    providerMessage.includes('provider')
+  );
 }
 
 async function sendAIQuery(
@@ -722,6 +789,7 @@ async function sendAIQuery(
 ) {
   try {
     const selectedModel = getModelConfig(options.modelId);
+    const attemptedModelIds = Array.isArray(options.attemptedModelIds) ? options.attemptedModelIds : [];
 
     if (!selectedModel.chatCapable) {
       return {
@@ -843,7 +911,17 @@ async function sendAIQuery(
         }
       );
     } catch (axiosError) {
+      const nextFallbackModelId = getFallbackModelId(selectedModel.id, attemptedModelIds);
+
       if (axiosError.code === 'ECONNABORTED') {
+        if (nextFallbackModelId) {
+          return sendAIQuery(userMessage, conversationHistory, sessionId, {
+            ...options,
+            modelId: nextFallbackModelId,
+            attemptedModelIds: [...attemptedModelIds, selectedModel.id],
+          });
+        }
+
         return {
           success: false,
           response: null,
@@ -853,20 +931,23 @@ async function sendAIQuery(
         };
       }
 
-      if (axiosError.response?.status === 429) {
-        if (shouldRetryRouter(options, selectedModel.id)) {
-          return sendAIQuery(userMessage, conversationHistory, sessionId, {
-            ...options,
-            modelId: DEFAULT_FALLBACK_MODEL,
-            routerRetryAttempted: true,
-          });
-        }
+      if (shouldFallbackFromProviderError(axiosError) && nextFallbackModelId) {
+        console.warn(
+          `[OpenRouter] Model ${selectedModel.id} gagal (${axiosError.response?.status || axiosError.code || axiosError.message}). Fallback ke ${nextFallbackModelId}.`
+        );
+        return sendAIQuery(userMessage, conversationHistory, sessionId, {
+          ...options,
+          modelId: nextFallbackModelId,
+          attemptedModelIds: [...attemptedModelIds, selectedModel.id],
+        });
+      }
 
-        if (shouldTryFallback(options, selectedModel.id)) {
+      if (axiosError.response?.status === 429) {
+        if (nextFallbackModelId) {
           return sendAIQuery(userMessage, conversationHistory, sessionId, {
             ...options,
-            modelId: DEFAULT_FALLBACK_MODEL,
-            fallbackAttempted: true,
+            modelId: nextFallbackModelId,
+            attemptedModelIds: [...attemptedModelIds, selectedModel.id],
           });
         }
 
@@ -918,19 +999,13 @@ async function sendAIQuery(
     const usage = response.data?.usage || {};
 
     if (!aiResponse) {
-      if (shouldRetryRouter(options, selectedModel.id)) {
-        return sendAIQuery(userMessage, conversationHistory, sessionId, {
-          ...options,
-          modelId: DEFAULT_FALLBACK_MODEL,
-          routerRetryAttempted: true,
-        });
-      }
+      const nextFallbackModelId = getFallbackModelId(selectedModel.id, attemptedModelIds);
 
-      if (shouldTryFallback(options, selectedModel.id)) {
+      if (nextFallbackModelId) {
         return sendAIQuery(userMessage, conversationHistory, sessionId, {
           ...options,
-          modelId: DEFAULT_FALLBACK_MODEL,
-          fallbackAttempted: true,
+          modelId: nextFallbackModelId,
+          attemptedModelIds: [...attemptedModelIds, selectedModel.id],
         });
       }
 

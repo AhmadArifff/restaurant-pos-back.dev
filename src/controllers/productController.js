@@ -1,6 +1,11 @@
 const db   = require('../config/db');
 const path = require('path');
 const fs   = require('fs');
+const {
+  isSupabaseStorageEnabled,
+  uploadImageBuffer,
+  deleteByPublicUrl,
+} = require('../services/supabaseStorage');
 
 const USED_STOCK_BY_OWNER_SQL = `
   SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
@@ -11,6 +16,33 @@ const USED_STOCK_BY_OWNER_SQL = `
     AND pi.stock_item_id = ?
   WHERE COALESCE(t.source_user_id, t.created_by) = ?
 `;
+
+const deleteProductImage = async (imageUrl) => {
+  if (!imageUrl) return;
+
+  if (/^https?:\/\//i.test(imageUrl)) {
+    await deleteByPublicUrl(imageUrl);
+    return;
+  }
+
+  const oldPath = path.join(process.cwd(), 'public', imageUrl);
+  if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+};
+
+const getUploadedProductImageUrl = async (file) => {
+  if (!file) return null;
+
+  if (isSupabaseStorageEnabled()) {
+    const uploaded = await uploadImageBuffer({
+      folder: 'products',
+      prefix: 'product',
+      file,
+    });
+    return uploaded.publicUrl;
+  }
+
+  return `/images/products/${file.filename}`;
+};
 
 exports.getAll = async (req, res) => {
   try {
@@ -82,7 +114,7 @@ exports.getAll = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const { name, price, category_id, ingredients } = req.body;
-    const image_url = req.file ? `/images/products/${req.file.filename}` : null;
+    const image_url = await getUploadedProductImageUrl(req.file);
 
     if (!name || !price)
       return res.status(400).json({ message: 'Nama dan harga wajib diisi' });
@@ -122,12 +154,8 @@ exports.update = async (req, res) => {
     let image_url = old[0]?.image_url;
 
     if (req.file) {
-      // Hapus gambar lama
-      if (image_url) {
-        const oldPath = path.join(process.cwd(), 'public', image_url);
-        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-      }
-      image_url = `/images/products/${req.file.filename}`;
+      await deleteProductImage(image_url);
+      image_url = await getUploadedProductImageUrl(req.file);
     }
 
     await db.query(
@@ -159,8 +187,7 @@ exports.remove = async (req, res) => {
   try {
     const [old] = await db.query('SELECT image_url FROM products WHERE id = ?', [req.params.id]);
     if (old[0]?.image_url) {
-      const imgPath = path.join(process.cwd(), 'public', old[0].image_url);
-      if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+      await deleteProductImage(old[0].image_url);
     }
     const [result] = await db.query('DELETE FROM products WHERE id = ?', [req.params.id]);
     if (!result.affectedRows)

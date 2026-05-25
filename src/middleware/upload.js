@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path   = require('path');
 const fs     = require('fs');
+const { isSupabaseStorageEnabled } = require('../services/supabaseStorage');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -22,4 +23,8 @@ const fileFilter = (req, file, cb) => {
   else cb(new Error('Format gambar tidak didukung'), false);
 };
 
-module.exports = multer({ storage, fileFilter, limits: { fileSize: 2 * 1024 * 1024 } });
+module.exports = multer({
+  storage: isSupabaseStorageEnabled() ? multer.memoryStorage() : storage,
+  fileFilter,
+  limits: { fileSize: 2 * 1024 * 1024 },
+});

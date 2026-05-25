@@ -1,15 +1,67 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
+const {
+  isSupabaseStorageEnabled,
+  uploadImageBuffer,
+  deleteByPublicUrl,
+} = require('../services/supabaseStorage');
 
 const ALLOWED_DATA_TYPES = new Set(['string', 'number', 'boolean', 'json']);
 
 const normalizeDataType = (value) => (ALLOWED_DATA_TYPES.has(value) ? value : 'string');
 const normalizeSettingValue = (value) => (value == null ? '' : String(value));
+const isPostgres = () => Boolean(db.isPostgres);
+
+const upsertSetting = async ({ settingKey, settingValue, dataType = 'string', updatedBy }) => {
+  const safeType = normalizeDataType(dataType);
+  const safeValue = normalizeSettingValue(settingValue);
+
+  if (isPostgres()) {
+    await db.query(
+      `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (setting_key) DO UPDATE SET
+         setting_value = EXCLUDED.setting_value,
+         data_type = EXCLUDED.data_type,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()`,
+      [settingKey, safeValue, safeType, updatedBy],
+    );
+    return { safeType, safeValue };
+  }
+
+  await db.query(
+    `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       setting_value = VALUES(setting_value),
+       data_type = VALUES(data_type),
+       updated_by = VALUES(updated_by)`,
+    [settingKey, safeValue, safeType, updatedBy],
+  );
+  return { safeType, safeValue };
+};
 
 // Ensure table exists and stays aligned with migration 015 schema
 const ensureTableExists = async () => {
   try {
+    if (isPostgres()) {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS website_settings (
+          id BIGSERIAL PRIMARY KEY,
+          setting_key VARCHAR(100) UNIQUE NOT NULL,
+          setting_value TEXT NOT NULL,
+          data_type VARCHAR(20) NOT NULL DEFAULT 'string'
+            CHECK (data_type IN ('string', 'number', 'boolean', 'json')),
+          updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+      await db.query('CREATE INDEX IF NOT EXISTS idx_website_settings_setting_key ON website_settings(setting_key)');
+      return;
+    }
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS website_settings (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -99,19 +151,14 @@ module.exports = {
         return res.status(400).json({ error: 'setting_key diperlukan' });
       }
 
-      const safeType = normalizeDataType(data_type);
-      const safeValue = normalizeSettingValue(setting_value);
       const updatedBy = req.user?.id || 1;
 
-      await db.query(
-        `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
-         VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           setting_value = VALUES(setting_value),
-           data_type = VALUES(data_type),
-           updated_by = VALUES(updated_by)`,
-        [setting_key, safeValue, safeType, updatedBy],
-      );
+      const { safeType, safeValue } = await upsertSetting({
+        settingKey: setting_key,
+        settingValue: setting_value,
+        dataType: data_type,
+        updatedBy,
+      });
 
       res.json({
         message: 'Setting berhasil disimpan',
@@ -135,20 +182,40 @@ module.exports = {
         return res.status(400).json({ error: 'setting_key dan file diperlukan' });
       }
 
-      const brandingDir = path.join(__dirname, '../../public/images/branding');
-      if (!fs.existsSync(brandingDir)) {
-        fs.mkdirSync(brandingDir, { recursive: true });
-      }
-
-      const ext = path.extname(req.file.originalname);
-      const filename = `${setting_key}-${Date.now()}${ext}`;
-      const filepath = path.join(brandingDir, filename);
-      fs.writeFileSync(filepath, req.file.buffer);
-
       const [oldRows] = await db.query(
         'SELECT setting_value FROM website_settings WHERE setting_key = ?',
         [setting_key],
       );
+
+      let settingValue;
+      let filename;
+
+      if (isSupabaseStorageEnabled()) {
+        if (Array.isArray(oldRows) && oldRows.length > 0) {
+          await deleteByPublicUrl(oldRows[0].setting_value);
+        }
+
+        const uploaded = await uploadImageBuffer({
+          folder: 'branding',
+          prefix: setting_key,
+          file: req.file,
+        });
+
+        settingValue = uploaded.publicUrl;
+        filename = uploaded.objectPath;
+      } else {
+        const brandingDir = path.join(__dirname, '../../public/images/branding');
+        if (!fs.existsSync(brandingDir)) {
+          fs.mkdirSync(brandingDir, { recursive: true });
+        }
+
+        const ext = path.extname(req.file.originalname);
+        filename = `${setting_key}-${Date.now()}${ext}`;
+        const filepath = path.join(brandingDir, filename);
+        fs.writeFileSync(filepath, req.file.buffer);
+
+        settingValue = `/images/branding/${filename}`;
+      }
 
       if (Array.isArray(oldRows) && oldRows.length > 0 && oldRows[0].setting_value) {
         const oldPath = oldRows[0].setting_value;
@@ -165,18 +232,14 @@ module.exports = {
         }
       }
 
-      const settingValue = `/images/branding/${filename}`;
       const updatedBy = req.user?.id || 1;
 
-      await db.query(
-        `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
-         VALUES (?, ?, 'string', ?)
-         ON DUPLICATE KEY UPDATE
-           setting_value = VALUES(setting_value),
-           data_type = VALUES(data_type),
-           updated_by = VALUES(updated_by)`,
-        [setting_key, settingValue, updatedBy],
-      );
+      await upsertSetting({
+        settingKey: setting_key,
+        settingValue,
+        dataType: 'string',
+        updatedBy,
+      });
 
       res.json({
         message: 'File berhasil diunggah',
@@ -212,18 +275,12 @@ module.exports = {
 
         if (!setting_key) continue;
 
-        const safeType = normalizeDataType(data_type);
-        const safeValue = normalizeSettingValue(setting_value);
-
-        await db.query(
-          `INSERT INTO website_settings (setting_key, setting_value, data_type, updated_by)
-           VALUES (?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             setting_value = VALUES(setting_value),
-             data_type = VALUES(data_type),
-             updated_by = VALUES(updated_by)`,
-          [setting_key, safeValue, safeType, updatedBy],
-        );
+        await upsertSetting({
+          settingKey: setting_key,
+          settingValue: setting_value,
+          dataType: data_type,
+          updatedBy,
+        });
       }
 
       res.json({ message: 'Semua setting berhasil disimpan' });
