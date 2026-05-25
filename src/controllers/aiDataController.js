@@ -588,7 +588,7 @@ async function getBestSellingProducts(limit = 10) {
 async function getAllProducts() {
   const query = `
     SELECT 
-      p.id, p.name, COALESCE(c.name, 'Uncategorized') as category, p.price, p.description,
+      p.id, p.name, COALESCE(c.name, 'Uncategorized') as category, p.price,
       COALESCE(s.stock, 0) as stock,
       COALESCE(s.min_stock, 0) as min_stock,
       COALESCE(s.unit, '-') as unit
@@ -670,13 +670,13 @@ async function getRecentTransactions(limit = 10) {
 async function getTodayAttendance() {
   const query = `
     SELECT 
-      u.id, u.username,
-      a.check_in, a.check_out, a.status,
-      TIMEDIFF(a.check_out, a.check_in) as duration
+      u.id, u.name,
+      a.login_at, a.logout_at,
+      CASE WHEN a.login_at IS NOT NULL THEN 'hadir' ELSE 'belum absen' END as status
     FROM users u
     LEFT JOIN attendance a ON u.id = a.user_id AND DATE(a.date) = CURDATE()
-    WHERE u.role IN ('cashier', 'manager', 'staff')
-    ORDER BY u.username
+    WHERE u.role IN ('admin', 'kasir')
+    ORDER BY u.name
   `;
 
   try {
@@ -693,7 +693,7 @@ async function getTodayAttendance() {
       };
     }
 
-    const present = results.filter(r => r.check_in).length;
+    const present = results.filter(r => r.login_at).length;
     const absent = results.length - present;
 
     return {
@@ -703,10 +703,10 @@ async function getTodayAttendance() {
       hadir: present,
       belum_absen: absent,
       daftar_kehadiran: results.map((item) => ({
-        nama: item.username,
-        jam_masuk: item.check_in,
-        jam_keluar: item.check_out,
-        status: item.status || (item.check_in ? 'hadir' : 'belum absen'),
+        nama: item.name,
+        jam_masuk: item.login_at,
+        jam_keluar: item.logout_at,
+        status: item.status || (item.login_at ? 'hadir' : 'belum absen'),
       })),
     };
   } catch (error) {

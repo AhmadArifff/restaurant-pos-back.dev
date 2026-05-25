@@ -165,6 +165,44 @@ exports.getMyRequests = async (req, res) => {
 
 // ── Admin: approve / reject ──────────────────────────────────────────────
 // Enhanced with atomic transaction and approval notes for audit trail
+exports.getApprovedForPos = async (req, res) => {
+  try {
+    const { user_id } = req.query;
+    const targetUserId = user_id || (req.user.role === 'admin' ? null : req.user.id);
+    const params = [];
+    let where = "WHERE sr.status = 'approved'";
+
+    if (targetUserId) {
+      where += ' AND sr.user_id = ?';
+      params.push(targetUserId);
+    }
+
+    const [requests] = await db.query(`
+      SELECT sr.*, u.name AS user_name, a.name AS approved_by_name
+      FROM stock_requests sr
+      JOIN users u ON sr.user_id = u.id
+      LEFT JOIN users a ON sr.approved_by = a.id
+      ${where}
+      AND EXISTS (SELECT 1 FROM stock_request_items sri WHERE sri.request_id = sr.id)
+      ORDER BY sr.approved_at DESC, sr.created_at DESC
+      LIMIT 50
+    `, params);
+
+    for (const request of requests) {
+      const [items] = await db.query(`
+        SELECT sri.*, si.name AS item_name, si.unit
+        FROM stock_request_items sri
+        JOIN stock_items si ON sri.stock_item_id = si.id
+        WHERE sri.request_id = ?
+      `, [request.id]);
+      request.items = items;
+    }
+
+    res.json(requests);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
 exports.approveRequest = async (req, res) => {
   const conn = await db.getConnection();
   try {
@@ -387,75 +425,6 @@ exports.approveRequest = async (req, res) => {
 // };
 
 // // ── Admin: approve / reject pengajuan ─────────────────────────
-// exports.approveRequest = async (req, res) => {
-//   const conn = await db.getConnection();
-//   try {
-//     await conn.beginTransaction();
-//     const { id } = req.params;
-//     const { action, approved_items, note } = req.body;
-//     // action: 'approve' | 'reject'
-//     // approved_items: [{ request_item_id, qty_approved }]
-
-//     const [[request]] = await conn.query(
-//       'SELECT * FROM stock_requests WHERE id = ?', [id]
-//     );
-//     if (!request) {
-//       await conn.rollback();
-//       return res.status(404).json({ message: 'Pengajuan tidak ditemukan' });
-//     }
-//     if (request.status !== 'pending') {
-//       await conn.rollback();
-//       return res.status(400).json({ message: 'Pengajuan sudah diproses' });
-//     }
-
-//     const status = action === 'approve' ? 'approved' : 'rejected';
-//     await conn.query(`
-//       UPDATE stock_requests
-//       SET status = ?, approved_by = ?, approved_at = NOW(), note = COALESCE(?, note)
-//       WHERE id = ?
-//     `, [status, req.user.id, note || null, id]);
-
-//     if (action === 'approve' && approved_items?.length) {
-//       for (const ai of approved_items) {
-//         // Update qty_approved di items
-//         await conn.query(
-//           'UPDATE stock_request_items SET qty_approved = ? WHERE id = ?',
-//           [ai.qty_approved, ai.request_item_id]
-//         );
-
-//         // Ambil detail item
-//         const [[item]] = await conn.query(
-//           'SELECT * FROM stock_request_items WHERE id = ?',
-//           [ai.request_item_id]
-//         );
-
-//         if (item && ai.qty_approved > 0) {
-//           // Catat keluar dari main_stock
-//           await conn.query(`
-//             INSERT INTO main_stock
-//               (stock_item_id, qty, cost_per_unit, type, source, reference_id, note, created_by)
-//             VALUES (?, ?, ?, 'out', 'request', ?, ?, ?)
-//           `, [item.stock_item_id, ai.qty_approved, item.cost_per_unit,
-//               id, `Pengajuan #${id}`, req.user.id]);
-
-//           // Kurangi stock_items (main stock)
-//           await conn.query(
-//             'UPDATE stock_items SET stock = GREATEST(0, stock - ?) WHERE id = ?',
-//             [ai.qty_approved, item.stock_item_id]
-//           );
-//         }
-//       }
-//     }
-
-//     await conn.commit();
-//     res.json({ message: `Pengajuan ${status}` });
-//   } catch (err) {
-//     await conn.rollback();
-//     res.status(500).json({ message: err.message });
-//   } finally {
-//     conn.release();
-//   }
-// };
 
 // ── Auto-submit saat login (jika belum ada) ───────────────────
 exports.autoRequestOnLogin = async (userId, db) => {

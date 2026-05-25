@@ -382,32 +382,13 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
     // Dibungkus try-catch terpisah agar error di sini tidak crash seluruh endpoint
     if (!type_filter || ['all', 'transaction'].includes(type_filter)) {
       try {
-        // Deteksi nama kolom user di tabel transactions secara dinamis
-        const [cols] = await db.query(`
-          SELECT COLUMN_NAME
-          FROM INFORMATION_SCHEMA.COLUMNS
-          WHERE TABLE_SCHEMA = DATABASE()
-            AND TABLE_NAME   = 'transactions'
-            AND COLUMN_NAME  IN ('cashier_id','user_id','created_by','kasir_id','operator_id')
-        `);
-
-        // Ambil kolom pertama yang ditemukan — prioritas: cashier_id > user_id > created_by
-        const priority  = ['cashier_id', 'user_id', 'created_by', 'kasir_id', 'operator_id'];
-        const found     = priority.find(p => cols.some(c => c.COLUMN_NAME === p));
+        const found = 'created_by';
 
         if (!found) {
           // Tidak ada kolom user yang dikenal → skip section ini, jangan crash
           console.warn('[getDaily] Tabel transactions tidak memiliki kolom user yang dikenal:', cols.map(c=>c.COLUMN_NAME));
         } else {
-          // Cek apakah product_ingredients ada kolom qty
-          const [piCols] = await db.query(`
-            SELECT COLUMN_NAME
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME   = 'product_ingredients'
-              AND COLUMN_NAME  IN ('qty','quantity','amount')
-          `);
-          const piQtyCol = piCols[0]?.COLUMN_NAME || 'qty';
+          const piQtyCol = 'qty';
 
           // BUG FIX: Use COALESCE to include both admin-created transactions FOR this kasir (source_user_id)
           // and kasir's own transactions (created_by). This ensures kasir sees all pengeluaran.
