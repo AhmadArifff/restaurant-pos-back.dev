@@ -6,14 +6,28 @@ const normalizePostgresSql = (sql) => {
   let normalized = String(sql)
     .replace(/`/g, '')
     .replace(/\bCURDATE\(\)/gi, 'CURRENT_DATE')
+    .replace(/\bDAYNAME\(([^()]+)\)/gi, "TO_CHAR(CAST($1 AS DATE), 'FMDay')")
+    .replace(/\bDAYOFWEEK\(([^()]+)\)/gi, '(EXTRACT(DOW FROM CAST($1 AS DATE)) + 1)')
+    .replace(/\bDAY\(([^()]+)\)/gi, 'EXTRACT(DAY FROM $1)')
+    .replace(/\bDATE_SUB\(NOW\(\),\s*INTERVAL\s+(\d+)\s+DAY\)/gi, "(NOW() - INTERVAL '$1 day')")
+    .replace(
+      /\bTIMESTAMPDIFF\(\s*MINUTE\s*,\s*([a-zA-Z0-9_.]+)\s*,\s*NOW\(\)\s*\)/gi,
+      'FLOOR(EXTRACT(EPOCH FROM (NOW() - $1)) / 60)'
+    )
     .replace(/\bYEAR\(([^)]+)\)/gi, 'EXTRACT(YEAR FROM $1)')
-    .replace(/\bMONTH\(([^)]+)\)/gi, 'EXTRACT(MONTH FROM $1)');
+    .replace(/\bMONTH\(([^)]+)\)/gi, 'EXTRACT(MONTH FROM $1)')
+    .replace(/\bDATE\(([^()]+)\)/gi, 'CAST($1 AS DATE)');
 
   let index = 0;
   normalized = normalized.replace(/\?/g, () => {
     index += 1;
     return `$${index}`;
   });
+
+  normalized = normalized.replace(
+    /\bDATE_SUB\(NOW\(\),\s*INTERVAL\s+\$(\d+)\s+DAY\)/gi,
+    "(NOW() - ($$$1::int * INTERVAL '1 day'))"
+  );
 
   if (/^\s*insert\s+/i.test(normalized) && !/\breturning\b/i.test(normalized)) {
     normalized = `${normalized.replace(/;+\s*$/, '')} RETURNING id`;

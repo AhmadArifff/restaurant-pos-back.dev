@@ -313,6 +313,26 @@ const getLowStockItems = async () => {
 };
 
 const getAttendanceSummary = async (start, end) => {
+  const activeMinutesExpr = db.isPostgres
+    ? `EXTRACT(EPOCH FROM (
+        (
+          CASE
+            WHEN a.logout_at IS NOT NULL THEN a.logout_at
+            WHEN a.date = CURRENT_DATE THEN NOW()
+            ELSE a.date::timestamp + time '23:59:59'
+          END
+        ) - a.login_at
+      )) / 60`
+    : `TIMESTAMPDIFF(
+        MINUTE,
+        a.login_at,
+        CASE
+          WHEN a.logout_at IS NOT NULL THEN a.logout_at
+          WHEN a.date = CURDATE() THEN NOW()
+          ELSE TIMESTAMP(a.date, '23:59:59')
+        END
+      )`;
+
   const [rows] = await db.query(`
     SELECT u.id,
            u.name,
@@ -322,15 +342,7 @@ const getAttendanceSummary = async (start, end) => {
                720,
                GREATEST(
                  0,
-                 TIMESTAMPDIFF(
-                   MINUTE,
-                   a.login_at,
-                   CASE
-                     WHEN a.logout_at IS NOT NULL THEN a.logout_at
-                     WHEN a.date = CURDATE() THEN NOW()
-                     ELSE TIMESTAMP(a.date, '23:59:59')
-                   END
-                 )
+                 ${activeMinutesExpr}
                )
              )
            ) / 60, 1) AS active_hours
@@ -741,10 +753,10 @@ exports.salesByProduct = async (req, res) => {
 
     let groupBy, dateSelect;
     if (period === 'monthly') {
-      groupBy    = 'MONTH(t.created_at), ti.product_id';
+      groupBy    = 'MONTH(t.created_at), ti.product_id, p.name';
       dateSelect = 'MONTH(t.created_at) AS period_key';
     } else {
-      groupBy    = 'DATE(t.created_at), ti.product_id';
+      groupBy    = 'DATE(t.created_at), ti.product_id, p.name';
       dateSelect = 'DATE(t.created_at) AS period_key';
     }
 
