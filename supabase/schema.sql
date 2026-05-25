@@ -39,12 +39,33 @@ DO $$ BEGIN
   CREATE TYPE customer_payment_status AS ENUM ('unpaid', 'paid');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  CREATE TYPE branch_status AS ENUM ('active', 'inactive');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+create table if not exists branches (
+  id bigserial primary key,
+  branch_key varchar(100) unique not null,
+  name varchar(150) not null,
+  area varchar(150) null,
+  address text null,
+  phone varchar(60) null,
+  status branch_status not null default 'active',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+insert into branches (branch_key, name, area, status)
+values ('default', 'Cabang Utama', 'Default', 'active')
+on conflict (branch_key) do nothing;
+
 create table if not exists users (
   id bigserial primary key,
   name varchar(100) not null,
   email varchar(100) unique not null,
   password varchar(255) not null,
   role user_role default 'kasir',
+  default_branch_id bigint null references branches(id) on delete set null,
   created_at timestamptz default now()
 );
 
@@ -69,6 +90,7 @@ create table if not exists transactions (
   payment_method payment_method default 'cash',
   created_by bigint not null references users(id),
   source_user_id bigint null references users(id),
+  branch_id bigint null references branches(id) on delete set null,
   created_at timestamptz default now()
 );
 
@@ -136,6 +158,7 @@ create table if not exists main_stock (
   source main_stock_source not null default 'purchase',
   reference_id bigint null,
   note text null,
+  branch_id bigint null references branches(id) on delete set null,
   created_by bigint not null references users(id),
   created_at timestamptz default now()
 );
@@ -146,6 +169,7 @@ create table if not exists stock_requests (
   date date not null,
   status stock_request_status not null default 'pending',
   note text null,
+  branch_id bigint null references branches(id) on delete set null,
   created_by_admin bigint null references users(id),
   approved_by bigint null references users(id),
   approved_at timestamptz null,
@@ -184,11 +208,12 @@ create table if not exists stock_request_audit (
 
 create table if not exists dining_tables (
   id bigserial primary key,
-  table_number varchar(30) unique not null,
+  table_number varchar(30) not null,
   table_name varchar(100) null,
   capacity integer not null default 2,
   qr_token varchar(80) unique not null,
   status dining_table_status not null default 'active',
+  branch_id bigint null references branches(id) on delete set null,
   note text null,
   created_by bigint null references users(id) on delete set null,
   created_at timestamptz default now(),
@@ -199,6 +224,7 @@ create table if not exists customer_orders (
   id bigserial primary key,
   order_code varchar(50) unique not null,
   table_id bigint not null references dining_tables(id),
+  branch_id bigint null references branches(id) on delete set null,
   customer_name varchar(120) null,
   customer_phone varchar(40) null,
   subtotal numeric(12,2) not null default 0,
@@ -247,22 +273,36 @@ create table if not exists customer_order_item_reviews (
   created_at timestamptz default now()
 );
 
+alter table users add column if not exists default_branch_id bigint null references branches(id) on delete set null;
+alter table dining_tables add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table customer_orders add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table main_stock add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table stock_requests add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table dining_tables drop constraint if exists dining_tables_table_number_key;
+create unique index if not exists unique_dining_table_branch_number on dining_tables(branch_id, table_number);
+
 create index if not exists idx_attendance_date on attendance(date);
 create index if not exists idx_attendance_user_date on attendance(user_id, date);
 create index if not exists idx_main_stock_type on main_stock(type);
 create index if not exists idx_main_stock_source on main_stock(source);
 create index if not exists idx_main_stock_created_at on main_stock(created_at);
 create index if not exists idx_main_stock_item on main_stock(stock_item_id);
+create index if not exists idx_main_stock_branch on main_stock(branch_id);
 create index if not exists idx_stock_requests_status on stock_requests(status);
 create index if not exists idx_stock_requests_date on stock_requests(date);
+create index if not exists idx_stock_requests_branch on stock_requests(branch_id);
+create index if not exists idx_transactions_branch on transactions(branch_id);
 create index if not exists idx_website_settings_setting_key on website_settings(setting_key);
 create index if not exists idx_stock_request_audit_request_id on stock_request_audit(request_id);
 create index if not exists idx_stock_request_audit_action on stock_request_audit(action);
 create index if not exists idx_stock_request_audit_created_at on stock_request_audit(created_at);
 create index if not exists idx_dining_tables_status on dining_tables(status);
+create index if not exists idx_dining_tables_branch on dining_tables(branch_id);
 create index if not exists idx_dining_tables_qr_token on dining_tables(qr_token);
 create index if not exists idx_customer_orders_status on customer_orders(status);
 create index if not exists idx_customer_orders_table_id on customer_orders(table_id);
+create index if not exists idx_customer_orders_branch on customer_orders(branch_id);
 create index if not exists idx_customer_orders_created_at on customer_orders(created_at);
 create index if not exists idx_customer_order_items_order_id on customer_order_items(order_id);
 
@@ -277,6 +317,11 @@ $$ language plpgsql;
 drop trigger if exists set_website_settings_updated_at on website_settings;
 create trigger set_website_settings_updated_at
 before update on website_settings
+for each row execute function set_updated_at();
+
+drop trigger if exists set_branches_updated_at on branches;
+create trigger set_branches_updated_at
+before update on branches
 for each row execute function set_updated_at();
 
 drop trigger if exists set_dining_tables_updated_at on dining_tables;
@@ -298,3 +343,10 @@ select
   'active'
 from generate_series(1, 8) as gs
 where not exists (select 1 from dining_tables limit 1);
+
+update users set default_branch_id = (select id from branches order by id limit 1) where default_branch_id is null;
+update dining_tables set branch_id = (select id from branches order by id limit 1) where branch_id is null;
+update customer_orders set branch_id = (select id from branches order by id limit 1) where branch_id is null;
+update transactions set branch_id = (select id from branches order by id limit 1) where branch_id is null;
+update main_stock set branch_id = (select id from branches order by id limit 1) where branch_id is null;
+update stock_requests set branch_id = (select id from branches order by id limit 1) where branch_id is null;

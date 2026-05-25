@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 // ── Kasir: buat pengajuan (pilih bahan + qty) ─────────────────
 exports.submitRequest = async (req, res) => {
@@ -8,6 +9,7 @@ exports.submitRequest = async (req, res) => {
     const { items, note } = req.body;
     const today  = new Date().toISOString().split('T')[0];
     const userId = req.user.id;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     if (!items?.length) {
       await conn.rollback();
@@ -17,8 +19,8 @@ exports.submitRequest = async (req, res) => {
     // Cek sudah ada pengajuan pending hari ini
     // Cek HANYA pending — bukan rejected/approved
     const [[existing]] = await conn.query(
-      'SELECT id, status FROM stock_requests WHERE user_id = ? AND date = ? AND status = "pending"',
-      [userId, today]
+      "SELECT id, status FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' AND (? IS NULL OR branch_id = ?)",
+      [userId, today, branchId, branchId]
     );
 
     let requestId;
@@ -35,8 +37,8 @@ exports.submitRequest = async (req, res) => {
       requestId = existing.id;
     } else {
       const [r] = await conn.query(
-        'INSERT INTO stock_requests (user_id, date, note, status) VALUES (?, ?, ?, "pending")',
-        [userId, today, note || null]
+        "INSERT INTO stock_requests (user_id, date, note, branch_id, status) VALUES (?, ?, ?, ?, 'pending')",
+        [userId, today, note || null, branchId]
       );
       requestId = r.insertId;
     }
@@ -95,11 +97,13 @@ exports.deleteRequest = async (req, res) => {
 exports.getAllRequests = async (req, res) => {
   try {
     const { date_from, date_to, status } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     let where = 'WHERE 1=1';
     const params = [];
     if (date_from) { where += ' AND sr.date >= ?'; params.push(date_from); }
     if (date_to)   { where += ' AND sr.date <= ?'; params.push(date_to); }
     if (status)    { where += ' AND sr.status = ?'; params.push(status); }
+    if (branchId)  { where += ' AND sr.branch_id = ?'; params.push(branchId); }
     where += ' AND EXISTS (SELECT 1 FROM stock_request_items sri WHERE sri.request_id = sr.id)';
 
     const [requests] = await db.query(`
@@ -133,9 +137,11 @@ exports.getAllRequests = async (req, res) => {
 exports.getMyRequests = async (req, res) => {
   try {
     const { status } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     let where = 'WHERE sr.user_id = ?';
     const params = [req.user.id];
     if (status) { where += ' AND sr.status = ?'; params.push(status); }
+    if (branchId) { where += ' AND sr.branch_id = ?'; params.push(branchId); }
 
     // Hanya yang punya items
     where += ' AND EXISTS (SELECT 1 FROM stock_request_items sri WHERE sri.request_id = sr.id)';
@@ -168,6 +174,7 @@ exports.getMyRequests = async (req, res) => {
 exports.getApprovedForPos = async (req, res) => {
   try {
     const { user_id } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const targetUserId = user_id || (req.user.role === 'admin' ? null : req.user.id);
     const params = [];
     let where = "WHERE sr.status = 'approved'";
@@ -175,6 +182,10 @@ exports.getApprovedForPos = async (req, res) => {
     if (targetUserId) {
       where += ' AND sr.user_id = ?';
       params.push(targetUserId);
+    }
+    if (branchId) {
+      where += ' AND sr.branch_id = ?';
+      params.push(branchId);
     }
 
     const [requests] = await db.query(`
@@ -436,7 +447,7 @@ exports.autoRequestOnLogin = async (userId, db) => {
     );
     if (!existing) {
       await db.query(
-        'INSERT INTO stock_requests (user_id, date, status) VALUES (?, ?, "pending")',
+        "INSERT INTO stock_requests (user_id, date, status) VALUES (?, ?, 'pending')",
         [userId, today]
       );
     }
@@ -463,7 +474,7 @@ exports.resubmitRequest = async (req, res) => {
     }
 
     await db.query(
-      'UPDATE stock_requests SET status = "pending", approved_by = NULL, approved_at = NULL WHERE id = ?',
+      "UPDATE stock_requests SET status = 'pending', approved_by = NULL, approved_at = NULL WHERE id = ?",
       [id]
     );
 

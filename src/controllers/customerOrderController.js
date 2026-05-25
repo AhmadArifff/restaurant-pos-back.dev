@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
 const STAFF_ORDER_STATUSES = ['accepted', 'preparing', 'ready', 'completed', 'cancelled'];
@@ -17,6 +18,7 @@ const normalizeTablePayload = (body) => ({
   capacity: Math.max(1, Number(body.capacity || 2)),
   status: ['active', 'maintenance', 'inactive'].includes(body.status) ? body.status : 'active',
   note: body.note ? String(body.note).trim() : null,
+  branch_id: body.branch_id ? Number(body.branch_id) : null,
 });
 
 const attachOrderDetails = async (order) => {
@@ -77,7 +79,20 @@ const getOrderRowById = async (id) => {
   return rows[0] || null;
 };
 
-const buildPublicMenu = async () => {
+const getBranchIngredientBalance = async (stockItemId, branchId) => {
+  const [[balance]] = await db.query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
+    FROM main_stock
+    WHERE stock_item_id = ?
+      AND (? IS NULL OR branch_id = ?)
+  `, [stockItemId, branchId, branchId]);
+
+  return Math.max(0, Number(balance?.total || 0));
+};
+
+const buildPublicMenu = async (branchId = null) => {
   const [products] = await db.query(`
     SELECT p.*, c.name AS category_name
     FROM products p
@@ -102,24 +117,7 @@ const buildPublicMenu = async () => {
 
     let canMake = Infinity;
     for (const ingredient of ingredients) {
-      const [[approved]] = await db.query(`
-        SELECT COALESCE(SUM(sri.qty_approved), 0) AS total
-        FROM stock_requests sr
-        JOIN stock_request_items sri ON sri.request_id = sr.id
-        WHERE sr.status = 'approved'
-          AND sri.stock_item_id = ?
-          AND sri.qty_approved IS NOT NULL
-      `, [ingredient.stock_item_id]);
-
-      const [[used]] = await db.query(`
-        SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
-        FROM transaction_items ti
-        JOIN product_ingredients pi
-          ON pi.product_id = ti.product_id
-          AND pi.stock_item_id = ?
-      `, [ingredient.stock_item_id]);
-
-      const remaining = Math.max(0, Number(approved.total) - Number(used.total));
+      const remaining = await getBranchIngredientBalance(ingredient.stock_item_id, branchId);
       canMake = Math.min(canMake, Math.floor(remaining / Number(ingredient.qty || 1)));
     }
 
@@ -160,6 +158,7 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
         payment_method: 'cash',
         userId: actorUserId,
         sourceUserId,
+        branchId: order.branch_id || null,
       });
     } catch (err) {
       lastError = err;
@@ -175,15 +174,17 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 
 exports.listPublicTables = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req);
     const orderBy = db.isPostgres
       ? 'table_number ASC'
       : 'CAST(table_number AS UNSIGNED), table_number';
     const [rows] = await db.query(`
-      SELECT id, table_number, table_name, capacity, qr_token, status
+      SELECT id, table_number, table_name, capacity, qr_token, status, branch_id
       FROM dining_tables
       WHERE status = 'active'
+        AND (? IS NULL OR branch_id = ?)
       ORDER BY ${orderBy}
-    `);
+    `, [branchId, branchId]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -193,7 +194,7 @@ exports.listPublicTables = async (req, res) => {
 exports.getPublicTableByToken = async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT id, table_number, table_name, capacity, qr_token, status
+      SELECT id, table_number, table_name, capacity, qr_token, status, branch_id
       FROM dining_tables
       WHERE qr_token = ? AND status = 'active'
       LIMIT 1
@@ -208,7 +209,7 @@ exports.getPublicTableByToken = async (req, res) => {
 
 exports.getPublicMenu = async (req, res) => {
   try {
-    const products = await buildPublicMenu();
+    const products = await buildPublicMenu(getRequestBranchId(req));
     res.json(products);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -235,6 +236,9 @@ exports.createOrder = async (req, res) => {
 
     const orderItems = [];
     let subtotal = 0;
+    const menuStock = new Map(
+      (await buildPublicMenu(tables[0].branch_id || null)).map((product) => [Number(product.id), Number(product.stock || 0)])
+    );
 
     for (const rawItem of items) {
       const qty = Math.max(1, Number(rawItem.qty || 1));
@@ -246,6 +250,12 @@ exports.createOrder = async (req, res) => {
       }
 
       const product = products[0];
+      const available = menuStock.get(Number(product.id)) || 0;
+      if (available < qty) {
+        const err = new Error(`Stok ${product.name} di cabang ini tidak cukup (tersedia: ${available})`);
+        err.status_code = 400;
+        throw err;
+      }
       const price = Number(product.price);
       const lineSubtotal = toMoney(price * qty);
       subtotal += lineSubtotal;
@@ -263,11 +273,12 @@ exports.createOrder = async (req, res) => {
     const orderCode = makeOrderCode();
     const [orderResult] = await conn.query(`
       INSERT INTO customer_orders
-        (order_code, table_id, customer_name, customer_phone, subtotal, final_total, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (order_code, table_id, branch_id, customer_name, customer_phone, subtotal, final_total, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       orderCode,
       tables[0].id,
+      tables[0].branch_id || null,
       customer_name ? String(customer_name).trim() : null,
       customer_phone ? String(customer_phone).trim() : null,
       subtotal,
@@ -401,6 +412,7 @@ exports.submitReview = async (req, res) => {
 
 exports.listManagedTables = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const [rows] = await db.query(`
       SELECT
         dt.id,
@@ -409,6 +421,8 @@ exports.listManagedTables = async (req, res) => {
         dt.capacity,
         dt.qr_token,
         dt.status,
+        dt.branch_id,
+        b.name AS branch_name,
         dt.note,
         dt.created_by,
         dt.created_at,
@@ -416,10 +430,12 @@ exports.listManagedTables = async (req, res) => {
         COUNT(co.id) AS total_orders,
         SUM(CASE WHEN co.status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) AS active_orders
       FROM dining_tables dt
+      LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
-      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.note, dt.created_by, dt.created_at, dt.updated_at
+      WHERE (? IS NULL OR dt.branch_id = ?)
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, dt.note, dt.created_by, dt.created_at, dt.updated_at
       ORDER BY dt.table_number ASC
-    `);
+    `, [branchId, branchId]);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -433,8 +449,8 @@ exports.createTable = async (req, res) => {
 
     const [result] = await db.query(`
       INSERT INTO dining_tables
-        (table_number, table_name, capacity, qr_token, status, note, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+        (table_number, table_name, capacity, qr_token, status, note, branch_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payload.table_number,
       payload.table_name,
@@ -442,6 +458,7 @@ exports.createTable = async (req, res) => {
       makeToken(),
       payload.status,
       payload.note,
+      payload.branch_id || getRequestBranchId(req) || req.user.branch_id || null,
       req.user?.id || null,
     ]);
 
@@ -463,6 +480,7 @@ exports.updateTable = async (req, res) => {
       payload.capacity,
       payload.status,
       payload.note,
+      payload.branch_id || getRequestBranchId(req) || req.user.branch_id || null,
     ];
     let tokenSql = '';
     if (req.body.regenerateToken) {
@@ -473,7 +491,7 @@ exports.updateTable = async (req, res) => {
 
     const [result] = await db.query(`
       UPDATE dining_tables
-      SET table_number = ?, table_name = ?, capacity = ?, status = ?, note = ?${tokenSql}
+      SET table_number = ?, table_name = ?, capacity = ?, status = ?, note = ?, branch_id = ?${tokenSql}
       WHERE id = ?
     `, params);
 
@@ -498,12 +516,17 @@ exports.deleteTable = async (req, res) => {
 exports.listOrders = async (req, res) => {
   try {
     const { status, limit = 80 } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const params = [];
     let where = 'WHERE 1=1';
 
     if (status && VALID_ORDER_STATUSES.includes(status)) {
       where += ' AND co.status = ?';
       params.push(status);
+    }
+    if (branchId) {
+      where += ' AND co.branch_id = ?';
+      params.push(branchId);
     }
 
     params.push(Number(limit));

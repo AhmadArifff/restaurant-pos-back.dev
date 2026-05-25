@@ -6,16 +6,7 @@ const {
   uploadImageBuffer,
   deleteByPublicUrl,
 } = require('../services/supabaseStorage');
-
-const USED_STOCK_BY_OWNER_SQL = `
-  SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
-  FROM transaction_items ti
-  JOIN transactions t ON ti.transaction_id = t.id
-  JOIN product_ingredients pi
-    ON pi.product_id = ti.product_id
-    AND pi.stock_item_id = ?
-  WHERE COALESCE(t.source_user_id, t.created_by) = ?
-`;
+const { getRequestBranchId } = require('../utils/branchContext');
 
 const deleteProductImage = async (imageUrl) => {
   if (!imageUrl) return;
@@ -44,9 +35,41 @@ const getUploadedProductImageUrl = async (file) => {
   return `/images/products/${file.filename}`;
 };
 
+const getBranchIngredientBalance = async (stockItemId, branchId) => {
+  const [[balance]] = await db.query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
+    FROM main_stock
+    WHERE stock_item_id = ?
+      AND (? IS NULL OR branch_id = ?)
+  `, [stockItemId, branchId, branchId]);
+
+  return Math.max(0, Number(balance?.total || 0));
+};
+
+const calculateProductStockByBranch = async (ingredients, branchId) => {
+  if (!ingredients.length) return { stock: 0, ingredientBalances: {} };
+
+  let minStock = Infinity;
+  const ingredientBalances = {};
+
+  for (const ing of ingredients) {
+    const balance = await getBranchIngredientBalance(ing.stock_item_id, branchId);
+    ingredientBalances[ing.stock_item_id] = balance;
+    minStock = Math.min(minStock, Math.floor(balance / Number(ing.qty || 1)));
+  }
+
+  return {
+    stock: minStock === Infinity ? 0 : minStock,
+    ingredientBalances,
+  };
+};
+
 exports.getAll = async (req, res) => {
   try {
     const { category_id, search } = req.query;
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
     let sql = `
       SELECT p.*, c.name AS category_name
       FROM products p
@@ -70,39 +93,9 @@ exports.getAll = async (req, res) => {
       `, [p.id]);
       p.ingredients = ings;
 
-      // Hitung stok produk dari approved request saja.
-      // Catatan: stok kasir/user tidak boleh dicampur dengan stok gudang umum.
-      if (ings.length > 0) {
-        let minStock = Infinity;
-
-        for (const ing of ings) {
-          // Total approved dari semua user
-          const [[approvedResult]] = await db.query(`
-            SELECT COALESCE(SUM(sri.qty_approved), 0) AS total_approved
-            FROM stock_requests sr
-            JOIN stock_request_items sri ON sri.request_id = sr.id
-            WHERE sr.status = 'approved'
-              AND sri.stock_item_id = ?
-              AND sri.qty_approved IS NOT NULL
-          `, [ing.stock_item_id]);
-
-          // Total yang sudah dipakai di semua transaksi
-          const [[usedResult]] = await db.query(`
-            SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total_used
-            FROM transaction_items ti
-            JOIN product_ingredients pi ON pi.product_id = ti.product_id
-              AND pi.stock_item_id = ?
-          `, [ing.stock_item_id]);
-
-          const approvedStock = Math.max(0, Number(approvedResult.total_approved) - Number(usedResult.total_used));
-          const portionsCanMake = Math.floor(approvedStock / ing.qty);
-          minStock = Math.min(minStock, portionsCanMake);
-        }
-
-        p.stock = minStock === Infinity ? 0 : minStock;
-      } else {
-        p.stock = 0;
-      }
+      const { stock, ingredientBalances } = await calculateProductStockByBranch(ings, branchId);
+      p.stock = stock;
+      p.branch_stock = ingredientBalances;
     }
 
     res.json(products);
@@ -200,7 +193,7 @@ exports.remove = async (req, res) => {
 // Endpoint baru: GET /products/my-stock (untuk kasir)
 exports.getMyStock = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
 
     const [products] = await db.query(`
       SELECT p.*, c.name AS category_name
@@ -225,30 +218,10 @@ exports.getMyStock = async (req, res) => {
         continue;
       }
 
-      // Hitung stok milik kasir ini dari approved requests SAJA (bukan warehouse)
-      // Stok kasir = total qty approved - total qty yang sudah dipakai transaksi
       const stockPerItem = {};
 
       for (const ing of ings) {
-        // Total approved untuk kasir ini SAJA
-        const [[approved]] = await db.query(`
-          SELECT COALESCE(SUM(sri.qty_approved), 0) AS total_approved
-          FROM stock_requests sr
-          JOIN stock_request_items sri ON sri.request_id = sr.id
-          WHERE sr.user_id = ?
-            AND sr.status = 'approved'
-            AND sri.stock_item_id = ?
-            AND sri.qty_approved IS NOT NULL
-        `, [userId, ing.stock_item_id]);
-
-        // Total sudah dipakai di transaksi kasir ini
-        // USED_STOCK_BY_OWNER_SQL returns column alias 'total' (COALESCE(SUM(...)) AS total)
-        const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, userId]);
-
-        // Stok = approved - used (TIDAK termasuk warehouse stock)
-        // BUG FIX: changed from used.total_used to used.total to match SQL alias
-        const approvedStock = Math.max(0, Number(approved.total_approved) - Number(used.total));
-        stockPerItem[ing.stock_item_id] = approvedStock;
+        stockPerItem[ing.stock_item_id] = await getBranchIngredientBalance(ing.stock_item_id, branchId);
       }
 
       // Stok produk = min dari semua bahan / qty per produk
@@ -268,6 +241,7 @@ exports.getMyStock = async (req, res) => {
 };
 exports.getStockByKasir = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
     const [kasirs] = await db.query(
       `SELECT id, name FROM users WHERE role = 'kasir' ORDER BY name ASC`
     );
@@ -296,17 +270,7 @@ exports.getStockByKasir = async (req, res) => {
         let canMake = Infinity;
 
         for (const ing of ings) {
-          const [[approved]] = await db.query(`
-            SELECT COALESCE(SUM(sri.qty_approved), 0) AS total
-            FROM stock_requests sr
-            JOIN stock_request_items sri ON sri.request_id = sr.id
-            WHERE sr.user_id = ? AND sr.status = 'approved'
-              AND sri.stock_item_id = ? AND sri.qty_approved IS NOT NULL
-          `, [kasir.id, ing.stock_item_id]);
-
-          const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, kasir.id]);
-
-          const remaining = Math.max(0, Number(approved.total) - Number(used.total));
+          const remaining = await getBranchIngredientBalance(ing.stock_item_id, branchId);
           canMake = Math.min(canMake, Math.floor(remaining / ing.qty));
         }
 
@@ -328,6 +292,7 @@ exports.getStockByKasir = async (req, res) => {
 // GET /products/stock-all — admin lihat stok semua user per produk
 exports.getStockAllUsers = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
     // Ambil semua user (kasir + admin)
     const [users] = await db.query(
       `SELECT id, name, role FROM users ORDER BY role DESC, name ASC`
@@ -361,21 +326,7 @@ exports.getStockAllUsers = async (req, res) => {
         const ingredientStocks = [];
 
         for (const ing of ings) {
-          // Total approved untuk user ini (dari approved requests SAJA, bukan warehouse)
-          const [[approved]] = await db.query(`
-            SELECT COALESCE(SUM(sri.qty_approved), 0) AS total
-            FROM stock_requests sr
-            JOIN stock_request_items sri ON sri.request_id = sr.id
-            WHERE sr.user_id = ? AND sr.status = 'approved'
-              AND sri.stock_item_id = ?
-              AND sri.qty_approved IS NOT NULL
-          `, [u.id, ing.stock_item_id]);
-
-          // Total sudah dipakai di transaksi user ini
-          const [[used]] = await db.query(USED_STOCK_BY_OWNER_SQL, [ing.stock_item_id, u.id]);
-
-          // Stok hanya dari approved requests (TIDAK termasuk warehouse stock)
-          const approvedStock = Math.max(0, Number(approved.total) - Number(used.total));
+          const approvedStock = await getBranchIngredientBalance(ing.stock_item_id, branchId);
           ingredientStocks.push({
             stock_item_id: ing.stock_item_id,
             ingredient_name: ing.ingredient_name,
@@ -397,8 +348,7 @@ exports.getStockAllUsers = async (req, res) => {
       }
 
       p.stock_by_user = stockByUser;
-      // Total stok dari semua user
-      p.stock = stockByUser.reduce((s, u) => s + u.can_make, 0);
+      p.stock = stockByUser[0]?.can_make || 0;
     }
 
     res.json(products);

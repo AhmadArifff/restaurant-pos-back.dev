@@ -43,6 +43,7 @@ app.use('/api/attendance', require('./routes/attendance'));
 app.use('/api/main-stock', require('./routes/mainStock'));
 app.use('/api/stock-requests', require('./routes/stockRequests'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/branches', require('./routes/branches'));
 app.use('/api/ai-chat', require('./routes/aiChat'));
 app.use('/api/ai', require('./routes/aiData'));
 app.use('/api/customer', require('./routes/customerOrders'));

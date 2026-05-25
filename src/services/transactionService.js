@@ -193,7 +193,7 @@ const db = require('../config/db');
 //   ✓ Fallback safety: GREATEST(0, ...) prevents DB negative but rejects at API level
 // ══════════════════════════════════════════════════════════════════════════
 
-exports.createTransaction = async ({ items, payment_method, userId, sourceUserId }) => {
+exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId }) => {
   const conn = await db.getConnection();
   try {
     // ⭕ BEGIN TRANSACTION - all operations below are atomic
@@ -228,31 +228,16 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       for (const ing of ings) {
         const neededQty = Number(ing.qty_per_unit) * Number(item.qty);
 
-        // Query 1: Get approved stock from cashier requests
-        const [[approved]] = await conn.query(`
-          SELECT COALESCE(SUM(sri.qty_approved), 0) AS total
-          FROM stock_requests sr
-          JOIN stock_request_items sri ON sri.request_id = sr.id
-          WHERE sr.user_id        = ?
-            AND sr.status         = 'approved'
-            AND sri.stock_item_id = ?
-            AND sri.qty_approved  IS NOT NULL
-        `, [stockOwnerId, ing.stock_item_id]);
+        const [[balance]] = await conn.query(`
+          SELECT
+            COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
+            COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
+          FROM main_stock
+          WHERE stock_item_id = ?
+            AND (? IS NULL OR branch_id = ?)
+        `, [ing.stock_item_id, branchId || null, branchId || null]);
 
-        // Query 2: Get already-used stock from previous transactions
-        // Use COALESCE to handle cases where kasir makes transaction directly (no source_user_id)
-        // Falls back to created_by if source_user_id is NULL
-        const [[used]] = await conn.query(`
-          SELECT COALESCE(SUM(ti.qty * pi.qty), 0) AS total
-          FROM transaction_items ti
-          JOIN transactions t ON ti.transaction_id = t.id
-          JOIN product_ingredients pi
-            ON pi.product_id     = ti.product_id
-            AND pi.stock_item_id = ?
-          WHERE COALESCE(t.source_user_id, t.created_by) = ?
-        `, [ing.stock_item_id, stockOwnerId]);
-
-        const remainingApproved = Number(approved.total) - Number(used.total);
+        const remainingApproved = Number(balance.total);
         
         // ❌ VALIDATION: Check if sufficient stock available
         if (remainingApproved < neededQty) {
@@ -293,9 +278,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const [txResult] = await conn.query(`
       INSERT INTO transactions
-        (invoice_number, total_price, payment_method, created_by, source_user_id)
-      VALUES (?, ?, ?, ?, ?)
-    `, [invoiceNumber, total, payment_method, userId, stockOwnerId]);
+        (invoice_number, total_price, payment_method, created_by, source_user_id, branch_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [invoiceNumber, total, payment_method, userId, stockOwnerId, branchId || null]);
 
     const transactionId = txResult.insertId;
 
@@ -334,8 +319,8 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
         // This is the "single source of truth" for stock calculations
         await conn.query(`
           INSERT INTO main_stock
-            (stock_item_id, qty, cost_per_unit, total_cost, type, source, reference_id, note, created_by)
-          VALUES (?, ?, ?, ?, 'out', 'transaction', ?, ?, ?)
+            (stock_item_id, qty, cost_per_unit, total_cost, type, source, reference_id, note, branch_id, created_by)
+          VALUES (?, ?, ?, ?, 'out', 'transaction', ?, ?, ?, ?)
         `, [
           ing.stock_item_id,
           qtyOut,
@@ -343,6 +328,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
           totalCost,
           transactionId,
           `INV: ${invoiceNumber} | Product x${item.qty} | ${ing.ing_name}`,
+          branchId || null,
           userId,
         ]);
 
@@ -382,7 +368,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
 // ──────────────────────────────────────────────────────────────────────────
 exports.create = async (req, res) => {
   try {
-    const { items, payment_method, source_user_id } = req.body;
+    const { items, payment_method, source_user_id, branch_id } = req.body;
     
     // Input validation
     if (!items || !items.length)
@@ -397,6 +383,7 @@ exports.create = async (req, res) => {
       payment_method: payment_method || 'cash',
       userId:         req.user.id,
       sourceUserId:   source_user_id || req.user.id,
+      branchId:       branch_id || req.user.branch_id || null,
     });
 
     res.status(201).json({ 

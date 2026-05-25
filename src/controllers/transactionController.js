@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 exports.create = async (req, res) => {
   try {
@@ -13,7 +14,8 @@ exports.create = async (req, res) => {
       items,
       payment_method: payment_method || 'cash',
       userId: req.user.id,
-      sourceUserId: sourceUserId || null
+      sourceUserId: sourceUserId || null,
+      branchId: getRequestBranchId(req) || req.user.branch_id || null,
     });
 
     res.status(201).json({ 
@@ -32,6 +34,7 @@ exports.create = async (req, res) => {
 exports.getAll = async (req, res) => {
   try {
     const { dateFrom, dateTo, search, limit = 100 } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     
     // Logging untuk debug
     console.log('Fetching transactions:', { dateFrom, dateTo, search, limit });
@@ -65,8 +68,12 @@ exports.getAll = async (req, res) => {
       params.push(dateTo); 
     }
     if (search) { 
-      sql += ' AND (t.invoice_number LIKE ? OR u_creator.name LIKE ? OR u_source.name LIKE ?)'; 
+      sql += ' AND (t.invoice_number LIKE ? OR u_creator.name LIKE ? OR u_source.name LIKE ?)';
       params.push(`%${search}%`, `%${search}%`, `%${search}%`); 
+    }
+    if (branchId) {
+      sql += ' AND t.branch_id = ?';
+      params.push(branchId);
     }
     
     sql += ' ORDER BY t.created_at DESC LIMIT ?';

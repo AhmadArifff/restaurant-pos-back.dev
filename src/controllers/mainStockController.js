@@ -1,8 +1,10 @@
 const db = require('../config/db');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 // ── Summary stok master (saldo saat ini per bahan) ────────────
 exports.getSummary = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const [rows] = await db.query(`
       SELECT
         si.id, si.name, si.unit, si.min_stock,
@@ -18,10 +20,10 @@ exports.getSummary = async (req, res) => {
          WHERE ms2.stock_item_id = si.id AND ms2.type = 'in'
          ORDER BY ms2.created_at DESC LIMIT 1) AS latest_cost_per_unit
       FROM stock_items si
-      LEFT JOIN main_stock ms ON ms.stock_item_id = si.id
+      LEFT JOIN main_stock ms ON ms.stock_item_id = si.id AND (? IS NULL OR ms.branch_id = ?)
       GROUP BY si.id, si.name, si.unit, si.min_stock, si.price_per_unit
       ORDER BY si.name ASC
-    `);
+    `, [branchId, branchId]);
     res.json(rows);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -29,6 +31,7 @@ exports.getSummary = async (req, res) => {
 exports.getMonthly = async (req, res) => {
   try {
     const { month, year } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const y = Number(year  || new Date().getFullYear());
     const m = Number(month || new Date().getMonth() + 1);
 
@@ -42,8 +45,9 @@ exports.getMonthly = async (req, res) => {
       JOIN stock_items si ON ms.stock_item_id = si.id
       JOIN users u         ON ms.created_by = u.id
       WHERE YEAR(ms.created_at) = ? AND MONTH(ms.created_at) = ?
+        AND (? IS NULL OR ms.branch_id = ?)
       ORDER BY ms.created_at DESC
-    `, [y, m]);
+    `, [y, m, branchId, branchId]);
     res.json(rows);
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
@@ -195,6 +199,7 @@ exports.getMonthly = async (req, res) => {
 exports.getDaily = async (req, res) => {
   try {
     const { date_from, date_to, user_id, type_filter } = req.query;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const from = date_from || new Date().toISOString().split('T')[0];
     const to   = date_to   || from;
     const uid  = user_id ? Number(user_id) : null;
@@ -329,10 +334,11 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
 
     WHERE ms.type = 'out'
       AND DATE(ms.created_at) BETWEEN ? AND ?
+      AND (? IS NULL OR ms.branch_id = ?)
       ${manualCond}
       ${userCond}
     ORDER BY ms.created_at DESC
-  `, [from, to]);
+  `, [from, to, branchId, branchId]);
 
   results.push(...rows);
 }
@@ -371,9 +377,10 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
         WHERE 1=1
           ${statusCond}
           AND DATE(sr.created_at) BETWEEN ? AND ?
+          AND (? IS NULL OR sr.branch_id = ?)
           ${userReqCond}
         ORDER BY sr.created_at DESC
-      `, [from, to]);
+      `, [from, to, branchId, branchId]);
 
       results.push(...rows);
     }
@@ -428,9 +435,10 @@ END AS admin_name,
             LEFT JOIN users kasir_src     ON kasir_src.id      = t.source_user_id
             LEFT JOIN users creator_u     ON creator_u.id      = t.created_by
             WHERE DATE(t.created_at) BETWEEN ? AND ?
+              AND (? IS NULL OR t.branch_id = ?)
               ${userTxCond}
             ORDER BY t.created_at DESC
-          `, [from, to]);
+          `, [from, to, branchId, branchId]);
 
           results.push(...rows);
         }
@@ -490,6 +498,7 @@ exports.addPurchase = async (req, res) => {
   try {
     await conn.beginTransaction();
     const { items, note } = req.body;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     const inserted = [];
     for (const item of items) {
@@ -498,9 +507,9 @@ exports.addPurchase = async (req, res) => {
       // 1. Insert ke main_stock
       const [r] = await conn.query(`
         INSERT INTO main_stock
-          (stock_item_id, qty, cost_per_unit, total_cost, type, source, note, created_by)
-        VALUES (?, ?, ?, ?, 'in', 'purchase', ?, ?)
-      `, [item.stock_item_id, item.qty, item.cost_per_unit, totalCost, note || null, req.user.id]);
+          (stock_item_id, qty, cost_per_unit, total_cost, type, source, note, branch_id, created_by)
+        VALUES (?, ?, ?, ?, 'in', 'purchase', ?, ?, ?)
+      `, [item.stock_item_id, item.qty, item.cost_per_unit, totalCost, note || null, branchId, req.user.id]);
 
       // 2. Recalculate otomatis
       await recalcStockItem(conn, item.stock_item_id);
@@ -524,9 +533,10 @@ exports.updatePurchase = async (req, res) => {
     await conn.beginTransaction();
     const { id } = req.params;
     const { qty, cost_per_unit, note } = req.body;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     const [[old]] = await conn.query(
-      'SELECT * FROM main_stock WHERE id = ? AND type = "in" AND source = "purchase"', [id]
+      "SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' AND (? IS NULL OR branch_id = ?)", [id, branchId, branchId]
     );
     if (!old) {
       await conn.rollback();
@@ -557,9 +567,10 @@ exports.deletePurchase = async (req, res) => {
   try {
     await conn.beginTransaction();
     const { id } = req.params;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     const [[row]] = await conn.query(
-      'SELECT * FROM main_stock WHERE id = ? AND type = "in" AND source = "purchase"', [id]
+      "SELECT * FROM main_stock WHERE id = ? AND type = 'in' AND source = 'purchase' AND (? IS NULL OR branch_id = ?)", [id, branchId, branchId]
     );
     if (!row) {
       await conn.rollback();
@@ -587,14 +598,21 @@ exports.addManualOut = async (req, res) => {
   try {
     await conn.beginTransaction();
     const { items, note, user_id } = req.body;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const targetUserId = (req.user.role === 'admin' && user_id) ? Number(user_id) : req.user.id;
     const adminId      = req.user.id;
 
     // ── Validasi stok dulu ──
     for (const item of items) {
       const [[si]] = await conn.query(
-        'SELECT id, stock, name FROM stock_items WHERE id = ?',
-        [item.stock_item_id]
+        `SELECT si.id, si.name,
+          COALESCE(SUM(CASE WHEN ms.type='in' THEN ms.qty ELSE 0 END), 0) -
+          COALESCE(SUM(CASE WHEN ms.type='out' THEN ms.qty ELSE 0 END), 0) AS stock
+         FROM stock_items si
+         LEFT JOIN main_stock ms ON ms.stock_item_id = si.id AND (? IS NULL OR ms.branch_id = ?)
+         WHERE si.id = ?
+         GROUP BY si.id, si.name`,
+        [branchId, branchId, item.stock_item_id]
       );
       if (!si) {
         await conn.rollback();
@@ -616,8 +634,8 @@ exports.addManualOut = async (req, res) => {
     // );
     // Cek pending saja — boleh buat baru jika sebelumnya rejected/approved
     const [[existingPending]] = await conn.query(
-      'SELECT id FROM stock_requests WHERE user_id = ? AND date = ? AND status = "pending"',
-      [targetUserId, today]
+      "SELECT id FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' AND (? IS NULL OR branch_id = ?)",
+      [targetUserId, today, branchId, branchId]
     );
 
     let reqId;
@@ -667,8 +685,8 @@ exports.addManualOut = async (req, res) => {
       // ── Tidak ada pending → buat request baru ──
       // (Boleh buat baru meski sudah ada yang approved di hari yang sama)
       const [reqResult] = await conn.query(
-        'INSERT INTO stock_requests (user_id, date, status, note, created_by_admin) VALUES (?, ?, "pending", ?, ?)',
-        [targetUserId, today, note || null, adminId]
+        "INSERT INTO stock_requests (user_id, date, status, note, branch_id, created_by_admin) VALUES (?, ?, 'pending', ?, ?, ?)",
+        [targetUserId, today, note || null, branchId, adminId]
       );
       reqId = reqResult.insertId;
 

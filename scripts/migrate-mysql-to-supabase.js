@@ -6,6 +6,7 @@ const mysql = require('mysql2/promise');
 const { Pool } = require('pg');
 
 const TABLES = [
+  'branches',
   'users',
   'categories',
   'products',

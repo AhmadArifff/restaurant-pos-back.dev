@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
+const { ensureDefaultBranches } = require('./branchController');
 
 exports.login = async (req, res) => {
   try {
@@ -8,7 +9,14 @@ exports.login = async (req, res) => {
     if (!email || !password)
       return res.status(400).json({ message: 'Email dan password wajib diisi' });
 
-    const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
+    await ensureDefaultBranches();
+
+    const [rows] = await db.query(`
+      SELECT u.*, b.name AS branch_name, b.branch_key
+      FROM users u
+      LEFT JOIN branches b ON b.id = u.default_branch_id
+      WHERE u.email = ?
+    `, [email]);
     if (!rows.length)
       return res.status(401).json({ message: 'Email tidak ditemukan' });
 
@@ -18,7 +26,7 @@ exports.login = async (req, res) => {
 
     const user = rows[0];
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { id: user.id, role: user.role, branch_id: user.default_branch_id || null },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES }
     );
@@ -47,7 +55,15 @@ exports.login = async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role }
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        default_branch_id: user.default_branch_id || null,
+        branch_name: user.branch_name || null,
+        branch_key: user.branch_key || null,
+      }
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -88,7 +104,10 @@ exports.getActiveUsers = async (req, res) => {
 exports.getMe = async (req, res) => {
   try {
     const [rows] = await db.query(
-      'SELECT id, name, email, role, created_at FROM users WHERE id = ?',
+      `SELECT u.id, u.name, u.email, u.role, u.default_branch_id, b.name AS branch_name, b.branch_key, u.created_at
+       FROM users u
+       LEFT JOIN branches b ON b.id = u.default_branch_id
+       WHERE u.id = ?`,
       [req.user.id]
     );
     if (!rows.length) return res.status(404).json({ message: 'User tidak ditemukan' });
@@ -110,8 +129,8 @@ exports.register = async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const [result] = await db.query(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)",
-      [name, email, hash, role || 'kasir']
+      "INSERT INTO users (name, email, password, role, default_branch_id) VALUES (?, ?, ?, ?, ?)",
+      [name, email, hash, role || 'kasir', req.body.default_branch_id || null]
     );
 
     res.status(201).json({ message: 'User berhasil dibuat', id: result.insertId });
@@ -123,7 +142,10 @@ exports.register = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const [rows] = await db.query(
-      'SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC'
+      `SELECT u.id, u.name, u.email, u.role, u.default_branch_id, b.name AS branch_name, u.created_at
+       FROM users u
+       LEFT JOIN branches b ON b.id = u.default_branch_id
+       ORDER BY u.created_at DESC`
     );
     res.json(rows);
   } catch (err) {
