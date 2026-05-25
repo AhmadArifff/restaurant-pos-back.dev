@@ -502,14 +502,12 @@ exports.addPurchase = async (req, res) => {
 
     const inserted = [];
     for (const item of items) {
-      const totalCost = Number(item.qty) * Number(item.cost_per_unit);
-
       // 1. Insert ke main_stock
       const [r] = await conn.query(`
         INSERT INTO main_stock
-          (stock_item_id, qty, cost_per_unit, total_cost, type, source, note, branch_id, created_by)
-        VALUES (?, ?, ?, ?, 'in', 'purchase', ?, ?, ?)
-      `, [item.stock_item_id, item.qty, item.cost_per_unit, totalCost, note || null, branchId, req.user.id]);
+          (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
+        VALUES (?, ?, ?, 'in', 'purchase', ?, ?, ?)
+      `, [item.stock_item_id, item.qty, item.cost_per_unit, note || null, branchId, req.user.id]);
 
       // 2. Recalculate otomatis
       await recalcStockItem(conn, item.stock_item_id);
@@ -545,8 +543,8 @@ exports.updatePurchase = async (req, res) => {
 
     // 1. Update main_stock
     await conn.query(
-      `UPDATE main_stock SET qty = ?, cost_per_unit = ?, total_cost = ?, note = ? WHERE id = ?`,
-      [qty, cost_per_unit, Number(qty) * Number(cost_per_unit), note || null, id]
+      `UPDATE main_stock SET qty = ?, cost_per_unit = ?, note = ? WHERE id = ?`,
+      [qty, cost_per_unit, note || null, id]
     );
 
     // 2. Recalculate otomatis

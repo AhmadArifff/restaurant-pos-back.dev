@@ -313,19 +313,17 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       for (const ing of ings) {
         const qtyOut      = Number(ing.qty_per_unit) * Number(item.qty);
         const costPerUnit = Number(ing.price_per_unit) || 0;
-        const totalCost   = qtyOut * costPerUnit;
 
         // 📝 Insert audit trail to main_stock (IMMUTABLE RECORD)
         // This is the "single source of truth" for stock calculations
         await conn.query(`
           INSERT INTO main_stock
-            (stock_item_id, qty, cost_per_unit, total_cost, type, source, reference_id, note, branch_id, created_by)
-          VALUES (?, ?, ?, ?, 'out', 'transaction', ?, ?, ?, ?)
+            (stock_item_id, qty, cost_per_unit, type, source, reference_id, note, branch_id, created_by)
+          VALUES (?, ?, ?, 'out', 'transaction', ?, ?, ?, ?)
         `, [
           ing.stock_item_id,
           qtyOut,
           costPerUnit,
-          totalCost,
           transactionId,
           `INV: ${invoiceNumber} | Product x${item.qty} | ${ing.ing_name}`,
           branchId || null,
