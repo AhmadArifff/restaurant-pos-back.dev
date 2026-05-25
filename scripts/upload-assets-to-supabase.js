@@ -1,4 +1,5 @@
 require('dotenv').config();
+require('dotenv').config({ path: '.env.vercel', override: true });
 require('dotenv').config({ path: '.env.migration.local', override: false });
 
 const fs = require('fs/promises');
