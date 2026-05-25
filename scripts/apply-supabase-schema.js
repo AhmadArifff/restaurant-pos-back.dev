@@ -23,7 +23,10 @@ const getPostgresConnectionString = (value) => {
 
 const run = async () => {
   const schemaPath = path.join(process.cwd(), 'supabase', 'schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf8');
+  const sql = fs
+    .readFileSync(schemaPath, 'utf8')
+    .replace(/^\uFEFF/, '')
+    .replace(/\uFEFF/g, '');
   const client = new Client({
     connectionString: getPostgresConnectionString(connectionString),
     ssl: process.env.DB_SSL === 'false' ? false : { rejectUnauthorized: false },
