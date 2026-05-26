@@ -6,6 +6,7 @@ const {
   uploadImageBuffer,
   deleteByPublicUrl,
 } = require('../services/supabaseStorage');
+const { getUserIngredientBalance } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
 
 const deleteProductImage = async (imageUrl) => {
@@ -224,7 +225,7 @@ exports.getMyStock = async (req, res) => {
       const stockPerItem = {};
 
       for (const ing of ings) {
-        stockPerItem[ing.stock_item_id] = await getBranchIngredientBalance(ing.stock_item_id, branchId);
+        stockPerItem[ing.stock_item_id] = await getUserIngredientBalance(db, ing.stock_item_id, req.user.id, branchId);
       }
 
       // Stok produk = min dari semua bahan / qty per produk
@@ -273,7 +274,7 @@ exports.getStockByKasir = async (req, res) => {
         let canMake = Infinity;
 
         for (const ing of ings) {
-          const remaining = await getBranchIngredientBalance(ing.stock_item_id, branchId);
+          const remaining = await getUserIngredientBalance(db, ing.stock_item_id, kasir.id, branchId);
           canMake = Math.min(canMake, Math.floor(remaining / ing.qty));
         }
 
@@ -329,7 +330,7 @@ exports.getStockAllUsers = async (req, res) => {
         const ingredientStocks = [];
 
         for (const ing of ings) {
-          const approvedStock = await getBranchIngredientBalance(ing.stock_item_id, branchId);
+          const approvedStock = await getUserIngredientBalance(db, ing.stock_item_id, u.id, branchId);
           ingredientStocks.push({
             stock_item_id: ing.stock_item_id,
             ingredient_name: ing.ingredient_name,

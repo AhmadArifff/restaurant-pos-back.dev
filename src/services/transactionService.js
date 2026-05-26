@@ -180,6 +180,7 @@
 // 2. Update stock_items.stock setelah transaksi
 // ============================================================
 const db = require('../config/db');
+const { getUserIngredientBalance } = require('./stockAllocationService');
 
 // ══════════════════════════════════════════════════════════════════════════
 // 🔄 ATOMIC TRANSACTION WITH FULL VALIDATION & ERROR HANDLING
@@ -228,19 +229,12 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       for (const ing of ings) {
         const neededQty = Number(ing.qty_per_unit) * Number(item.qty);
 
-        const branchWhere = branchId ? 'AND branch_id = ?' : '';
-        const balanceParams = [ing.stock_item_id];
-        if (branchId) balanceParams.push(branchId);
-        const [[balance]] = await conn.query(`
-          SELECT
-            COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
-            COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
-          FROM main_stock
-          WHERE stock_item_id = ?
-            ${branchWhere}
-        `, balanceParams);
-
-        const remainingApproved = Number(balance.total);
+        const remainingApproved = await getUserIngredientBalance(
+          conn,
+          ing.stock_item_id,
+          stockOwnerId,
+          branchId
+        );
         
         // ❌ VALIDATION: Check if sufficient stock available
         if (remainingApproved < neededQty) {
