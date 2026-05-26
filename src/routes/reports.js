@@ -2,7 +2,7 @@ const router = require('express').Router();
 const c      = require('../controllers/reportController');
 const { authenticate, isAdmin } = require('../middleware/auth');
 
-router.get('/today',        authenticate, isAdmin, c.todayStats);
+router.get('/today',        authenticate, c.todayStats);
 router.get('/sales',        authenticate, isAdmin, c.sales);
 router.get('/yearly',       authenticate, isAdmin, c.yearlyStats);
 router.get('/best-selling', authenticate, isAdmin, c.bestSelling);

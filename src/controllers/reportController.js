@@ -1,5 +1,6 @@
 const PDFDocument = require('pdfkit');
 const db = require('../config/db');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
@@ -574,7 +575,11 @@ exports.sales = async (req, res) => {
 
 exports.todayStats = async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    const jakartaNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const today = toSqlDate(jakartaNow);
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
+    const branchFilter = branchId ? 'AND t.branch_id = ?' : '';
+    const params = branchId ? [today, branchId] : [today];
 
     // Total transaksi & revenue hari ini
     const [[stat]] = await db.query(`
@@ -583,7 +588,8 @@ exports.todayStats = async (req, res) => {
         COALESCE(SUM(t.total_price), 0) AS revenue
       FROM transactions t
       WHERE DATE(t.created_at) = ?
-    `, [today]);
+      ${branchFilter}
+    `, params);
 
     // Hitung HPP hari ini
     const [items] = await db.query(`
@@ -591,7 +597,8 @@ exports.todayStats = async (req, res) => {
       FROM transaction_items ti
       JOIN transactions t ON ti.transaction_id = t.id
       WHERE DATE(t.created_at) = ?
-    `, [today]);
+      ${branchFilter}
+    `, params);
 
     let totalHPP = 0;
     for (const item of items) {
