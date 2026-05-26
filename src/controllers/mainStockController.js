@@ -4,7 +4,8 @@ const { getRequestBranchId } = require('../utils/branchContext');
 // ── Summary stok master (saldo saat ini per bahan) ────────────
 exports.getSummary = async (req, res) => {
   try {
-    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const requestedBranchId = getRequestBranchId(req);
+    const branchId = requestedBranchId === 'all' ? null : (requestedBranchId || req.user.branch_id || null);
     const branchJoin = branchId ? 'AND ms.branch_id = ?' : '';
     const latestBranchWhere = branchId ? 'AND ms2.branch_id = ?' : '';
     const params = branchId ? [branchId, branchId] : [];
@@ -34,7 +35,8 @@ exports.getSummary = async (req, res) => {
 exports.getMonthly = async (req, res) => {
   try {
     const { month, year } = req.query;
-    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const requestedBranchId = getRequestBranchId(req);
+    const branchId = requestedBranchId === 'all' ? null : (requestedBranchId || req.user.branch_id || null);
     const y = Number(year  || new Date().getFullYear());
     const m = Number(month || new Date().getMonth() + 1);
     const params = [y, m];
@@ -56,6 +58,86 @@ exports.getMonthly = async (req, res) => {
     `, params);
     res.json(rows);
   } catch (err) { res.status(500).json({ message: err.message }); }
+};
+
+exports.getPriceTrends = async (req, res) => {
+  try {
+    const year = Number(req.query.year || new Date().getFullYear());
+
+    const [rows] = await db.query(`
+      SELECT
+        si.id,
+        si.name,
+        si.unit,
+        COALESCE((
+          SELECT ms.cost_per_unit
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+            AND YEAR(ms.created_at) = ?
+          ORDER BY ms.created_at ASC, ms.id ASC
+          LIMIT 1
+        ), 0) AS year_first_price,
+        COALESCE((
+          SELECT ms.cost_per_unit
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+            AND YEAR(ms.created_at) = ?
+          ORDER BY ms.created_at DESC, ms.id DESC
+          LIMIT 1
+        ), 0) AS year_last_price,
+        COALESCE((
+          SELECT ms.cost_per_unit
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+          ORDER BY ms.created_at ASC, ms.id ASC
+          LIMIT 1
+        ), 0) AS all_first_price,
+        COALESCE((
+          SELECT ms.cost_per_unit
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+          ORDER BY ms.created_at DESC, ms.id DESC
+          LIMIT 1
+        ), 0) AS all_last_price,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+            AND YEAR(ms.created_at) = ?
+        ), 0) AS year_purchase_count,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM main_stock ms
+          WHERE ms.stock_item_id = si.id
+            AND ms.type = 'in'
+        ), 0) AS all_purchase_count
+      FROM stock_items si
+      ORDER BY si.name ASC
+    `, [year, year, year]);
+
+    const withPercent = rows.map((row) => {
+      const yearFirst = Number(row.year_first_price || 0);
+      const yearLast = Number(row.year_last_price || 0);
+      const allFirst = Number(row.all_first_price || 0);
+      const allLast = Number(row.all_last_price || 0);
+
+      return {
+        ...row,
+        year,
+        year_change_percent: yearFirst > 0 ? Number((((yearLast - yearFirst) / yearFirst) * 100).toFixed(2)) : 0,
+        all_change_percent: allFirst > 0 ? Number((((allLast - allFirst) / allFirst) * 100).toFixed(2)) : 0,
+      };
+    });
+
+    res.json(withPercent);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 // ── Rekap harian pengeluaran ──────────────────────────────────
@@ -205,7 +287,8 @@ exports.getMonthly = async (req, res) => {
 exports.getDaily = async (req, res) => {
   try {
     const { date_from, date_to, user_id, type_filter } = req.query;
-    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const requestedBranchId = getRequestBranchId(req);
+    const branchId = requestedBranchId === 'all' ? null : (requestedBranchId || req.user.branch_id || null);
     const from = date_from || new Date().toISOString().split('T')[0];
     const to   = date_to   || from;
     const uid  = user_id ? Number(user_id) : null;

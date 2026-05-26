@@ -4,6 +4,7 @@ const { authenticate, isAdmin } = require('../middleware/auth');
 
 router.get('/summary',  authenticate, c.getSummary);
 router.get('/daily',    authenticate, c.getDaily);
+router.get('/price-trends', authenticate, isAdmin, c.getPriceTrends);
 router.post('/out',           authenticate, c.addManualOut);
 
 router.get('/monthly',  authenticate, isAdmin, c.getMonthly);
