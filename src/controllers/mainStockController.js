@@ -1,6 +1,11 @@
 const db = require('../config/db');
 const { getRequestBranchId } = require('../utils/branchContext');
 
+const jakartaDateExpr = (column) =>
+  db.isPostgres
+    ? `CAST(${column} AT TIME ZONE 'Asia/Jakarta' AS DATE)`
+    : `DATE(${column})`;
+
 // ── Summary stok master (saldo saat ini per bahan) ────────────
 exports.getSummary = async (req, res) => {
   try {
@@ -292,6 +297,9 @@ exports.getDaily = async (req, res) => {
     const from = date_from || new Date().toISOString().split('T')[0];
     const to   = date_to   || from;
     const uid  = user_id ? Number(user_id) : null;
+    const msDate = jakartaDateExpr('ms.created_at');
+    const srDate = jakartaDateExpr('sr.created_at');
+    const txDate = jakartaDateExpr('t.created_at');
 
     const results = [];
 
@@ -370,6 +378,7 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
       ms.total_cost,
       ms.note,
       ms.created_at,
+      b.name       AS branch_name,
       'approved'  AS request_status,
       'out'       AS type,
       si.name     AS item_name,
@@ -412,6 +421,7 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
     FROM main_stock ms
     JOIN  stock_items si         ON ms.stock_item_id = si.id
     JOIN  users creator          ON ms.created_by    = creator.id
+    LEFT JOIN branches b         ON b.id             = ms.branch_id
 
     -- Join ke transactions jika source = transaction
     LEFT JOIN transactions tx         ON tx.id = ms.reference_id AND ms.source = 'transaction'
@@ -425,7 +435,7 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
     LEFT JOIN users approver     ON approver.id = sr.approved_by
 
     WHERE ms.type = 'out'
-      AND DATE(ms.created_at) BETWEEN ? AND ?
+      AND ${msDate} BETWEEN ? AND ?
       ${branchMainWhere}
       ${manualCond}
       ${userCond}
@@ -454,6 +464,7 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
           (sri.qty_requested * sri.cost_per_unit)         AS total_cost,
           sr.note,
           sr.created_at,
+          b_req.name                                      AS branch_name,
           sr.status                                       AS request_status,
           'pending_out'                                   AS type,
           si.name                                         AS item_name,
@@ -469,9 +480,10 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
         JOIN  users kasir_u           ON sr.user_id        = kasir_u.id
         LEFT JOIN users admin_c       ON sr.created_by_admin = admin_c.id
         LEFT JOIN users approver      ON sr.approved_by    = approver.id
+        LEFT JOIN branches b_req      ON b_req.id          = sr.branch_id
         WHERE 1=1
           ${statusCond}
-          AND DATE(sr.created_at) BETWEEN ? AND ?
+          AND ${srDate} BETWEEN ? AND ?
           ${branchRequestWhere}
           ${userReqCond}
         ORDER BY sr.created_at DESC
@@ -509,6 +521,7 @@ if (!type_filter || ['all', 'approved', 'manual'].includes(type_filter)) {
               (ti.qty * pi.${piQtyCol} * COALESCE(si.price_per_unit, 0)) AS total_cost,
               CONCAT('Transaksi · ', p.name, ' ×', ti.qty) AS note,
               t.created_at,
+              b_tx.name                                      AS branch_name,
               'approved'    AS request_status,
               'transaction' AS type,
               si.name       AS item_name,
@@ -532,7 +545,8 @@ END AS admin_name,
             JOIN  users kasir_u           ON kasir_u.id        = t.${found}
             LEFT JOIN users kasir_src     ON kasir_src.id      = t.source_user_id
             LEFT JOIN users creator_u     ON creator_u.id      = t.created_by
-            WHERE DATE(t.created_at) BETWEEN ? AND ?
+            LEFT JOIN branches b_tx       ON b_tx.id           = t.branch_id
+            WHERE ${txDate} BETWEEN ? AND ?
               ${branchTxWhere}
               ${userTxCond}
             ORDER BY t.created_at DESC
@@ -1000,3 +1014,4 @@ exports.recalculateItemBalance = async (req, res) => {
     conn.release();
   }
 };
+

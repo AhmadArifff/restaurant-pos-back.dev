@@ -17,6 +17,11 @@ const toSqlDate = (date) => {
   return `${y}-${m}-${d}`;
 };
 
+const jakartaDateExpr = (column) =>
+  db.isPostgres
+    ? `CAST(${column} AT TIME ZONE 'Asia/Jakarta' AS DATE)`
+    : `DATE(${column})`;
+
 const getPeriodRange = (period, month, year) => {
   const y = Number(year || new Date().getFullYear());
   const m = Number(month || new Date().getMonth() + 1);
@@ -580,6 +585,7 @@ exports.todayStats = async (req, res) => {
     const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
     const branchFilter = branchId ? 'AND t.branch_id = ?' : '';
     const params = branchId ? [today, branchId] : [today];
+    const txDate = jakartaDateExpr('t.created_at');
 
     // Total transaksi & revenue hari ini
     const [[stat]] = await db.query(`
@@ -587,7 +593,7 @@ exports.todayStats = async (req, res) => {
         COUNT(DISTINCT t.id)  AS total_trx,
         COALESCE(SUM(t.total_price), 0) AS revenue
       FROM transactions t
-      WHERE DATE(t.created_at) = ?
+      WHERE ${txDate} = ?
       ${branchFilter}
     `, params);
 
@@ -596,7 +602,7 @@ exports.todayStats = async (req, res) => {
       SELECT ti.product_id, ti.qty
       FROM transaction_items ti
       JOIN transactions t ON ti.transaction_id = t.id
-      WHERE DATE(t.created_at) = ?
+      WHERE ${txDate} = ?
       ${branchFilter}
     `, params);
 

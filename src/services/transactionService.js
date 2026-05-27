@@ -182,6 +182,30 @@
 const db = require('../config/db');
 const { getUserIngredientBalance } = require('./stockAllocationService');
 
+const buildCheckoutLockKey = (stockOwnerId, branchId) =>
+  `pos-checkout:${branchId || 'global'}:${stockOwnerId}`;
+
+const acquireCheckoutLock = async (conn, lockKey) => {
+  if (db.isPostgres) {
+    await conn.query('SELECT pg_advisory_xact_lock(hashtext(?))', [lockKey]);
+    return;
+  }
+
+  const [[lock]] = await conn.query('SELECT GET_LOCK(?, 10) AS locked', [lockKey]);
+  if (Number(lock?.locked || 0) !== 1) {
+    const err = new Error('Transaksi sedang diproses. Silakan coba beberapa detik lagi.');
+    err.status_code = 429;
+    throw err;
+  }
+};
+
+const releaseCheckoutLock = async (conn, lockKey) => {
+  if (!lockKey || db.isPostgres) return;
+  try {
+    await conn.query('SELECT RELEASE_LOCK(?)', [lockKey]);
+  } catch (_) {}
+};
+
 // ══════════════════════════════════════════════════════════════════════════
 // 🔄 ATOMIC TRANSACTION WITH FULL VALIDATION & ERROR HANDLING
 // ══════════════════════════════════════════════════════════════════════════
@@ -196,6 +220,7 @@ const { getUserIngredientBalance } = require('./stockAllocationService');
 
 exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId }) => {
   const conn = await db.getConnection();
+  let lockKey = null;
   try {
     // ⭕ BEGIN TRANSACTION - all operations below are atomic
     await conn.beginTransaction();
@@ -203,6 +228,8 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
     const stockOwnerId  = sourceUserId || userId;
     let   total         = 0;
     const invoiceNumber = `INV-${Date.now()}`;
+    lockKey = buildCheckoutLockKey(stockOwnerId, branchId);
+    await acquireCheckoutLock(conn, lockKey);
 
     // Step 1: Calculate total transaction value
     for (const item of items) {
@@ -353,6 +380,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
     throw err;
 
   } finally {
+    await releaseCheckoutLock(conn, lockKey);
     conn.release();
   }
 };

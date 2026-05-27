@@ -2,6 +2,11 @@ const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
 const { getRequestBranchId } = require('../utils/branchContext');
 
+const jakartaDateExpr = (column) =>
+  db.isPostgres
+    ? `CAST(${column} AT TIME ZONE 'Asia/Jakarta' AS DATE)`
+    : `DATE(${column})`;
+
 exports.create = async (req, res) => {
   try {
     const { items, payment_method, sourceUserId } = req.body;
@@ -35,6 +40,7 @@ exports.getAll = async (req, res) => {
   try {
     const { dateFrom, dateTo, search, limit = 100 } = req.query;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const txDate = jakartaDateExpr('t.created_at');
     
     // Logging untuk debug
     console.log('Fetching transactions:', { dateFrom, dateTo, search, limit });
@@ -60,11 +66,11 @@ exports.getAll = async (req, res) => {
     const params = [];
 
     if (dateFrom) { 
-      sql += ' AND DATE(t.created_at) >= ?'; 
+      sql += ` AND ${txDate} >= ?`;
       params.push(dateFrom); 
     }
     if (dateTo) { 
-      sql += ' AND DATE(t.created_at) <= ?'; 
+      sql += ` AND ${txDate} <= ?`;
       params.push(dateTo); 
     }
     if (search) { 
