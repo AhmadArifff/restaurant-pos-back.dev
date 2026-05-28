@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
-const { getUserIngredientBalance } = require('../services/stockAllocationService');
+const { getUserIngredientBalances } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
 const {
   calculateAmount,
@@ -93,6 +93,21 @@ const getOrderRowById = async (id) => {
   return rows[0] || null;
 };
 
+const groupIngredientsByProductId = (rows) => rows.reduce((acc, row) => {
+  const productId = Number(row.product_id);
+  if (!acc[productId]) acc[productId] = [];
+  acc[productId].push(row);
+  return acc;
+}, {});
+
+const calculateCanMake = (ingredients, balances) => {
+  if (!ingredients.length) return 0;
+  return Math.min(...ingredients.map((ingredient) => {
+    const available = balances[Number(ingredient.stock_item_id)] || 0;
+    return Math.floor(available / Number(ingredient.qty || 1));
+  }));
+};
+
 const buildPublicMenu = async (branchId = null) => {
   const [stockUsers] = await db.query(
     "SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC"
@@ -104,14 +119,36 @@ const buildPublicMenu = async (branchId = null) => {
     LEFT JOIN categories c ON p.category_id = c.id
     ORDER BY c.name ASC, p.name ASC
   `);
+  const productIds = products.map((product) => Number(product.id)).filter(Boolean);
+  const ingredientsByProductId = {};
 
-  for (const product of products) {
-    const [ingredients] = await db.query(`
-      SELECT pi.qty, si.id AS stock_item_id, si.name AS ingredient_name, si.unit
+  if (productIds.length) {
+    const placeholders = productIds.map(() => '?').join(',');
+    const [ingredientRows] = await db.query(`
+      SELECT pi.product_id, pi.qty, si.id AS stock_item_id, si.name AS ingredient_name, si.unit
       FROM product_ingredients pi
       JOIN stock_items si ON pi.stock_item_id = si.id
-      WHERE pi.product_id = ?
-    `, [product.id]);
+      WHERE pi.product_id IN (${placeholders})
+      ORDER BY pi.product_id ASC, pi.id ASC
+    `, productIds);
+    Object.assign(ingredientsByProductId, groupIngredientsByProductId(ingredientRows));
+  }
+
+  const stockItemIds = [
+    ...new Set(Object.values(ingredientsByProductId)
+      .flat()
+      .map((ingredient) => Number(ingredient.stock_item_id))
+      .filter(Boolean)),
+  ];
+  const userBalances = await getUserIngredientBalances(
+    db,
+    stockItemIds,
+    stockUsers.map((user) => user.id),
+    branchId
+  );
+
+  for (const product of products) {
+    const ingredients = ingredientsByProductId[Number(product.id)] || [];
 
     product.ingredients = ingredients;
 
@@ -125,13 +162,7 @@ const buildPublicMenu = async (branchId = null) => {
     const stockByUser = [];
 
     for (const user of stockUsers) {
-      let canMake = Infinity;
-      for (const ingredient of ingredients) {
-        const remaining = await getUserIngredientBalance(db, ingredient.stock_item_id, user.id, branchId);
-        canMake = Math.min(canMake, Math.floor(remaining / Number(ingredient.qty || 1)));
-      }
-
-      const ready = canMake === Infinity ? 0 : Math.max(0, canMake);
+      const ready = calculateCanMake(ingredients, userBalances[Number(user.id)] || {});
       stockByUser.push({
         user_id: user.id,
         user_name: user.name,
