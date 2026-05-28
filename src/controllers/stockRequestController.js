@@ -1,5 +1,10 @@
 const db = require('../config/db');
 const { getRequestBranchId } = require('../utils/branchContext');
+const {
+  appendRequestItems,
+  mergeNotes,
+  normalizeRequestItems,
+} = require('../utils/stockRequestMerge');
 
 // ── Kasir: buat pengajuan (pilih bahan + qty) ─────────────────
 exports.submitRequest = async (req, res) => {
@@ -11,7 +16,8 @@ exports.submitRequest = async (req, res) => {
     const userId = req.user.id;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
-    if (!items?.length) {
+    const normalizedItems = normalizeRequestItems(items);
+    if (!normalizedItems.length) {
       await conn.rollback();
       return res.status(400).json({ message: 'Minimal 1 item' });
     }
@@ -22,20 +28,15 @@ exports.submitRequest = async (req, res) => {
     const pendingParams = [userId, today];
     if (branchId) pendingParams.push(branchId);
     const [[existing]] = await conn.query(
-      `SELECT id, status FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
+      `SELECT id, status, note FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
       pendingParams
     );
 
     let requestId;
     if (existing) {
-      // Update existing pending
       await conn.query(
         'UPDATE stock_requests SET note = ? WHERE id = ?',
-        [note || null, existing.id]
-      );
-      await conn.query(
-        'DELETE FROM stock_request_items WHERE request_id = ?',
-        [existing.id]
+        [mergeNotes(existing.note, note), existing.id]
       );
       requestId = existing.id;
     } else {
@@ -47,20 +48,15 @@ exports.submitRequest = async (req, res) => {
     }
 
     // Insert items — cost_per_unit ambil dari stock_items (price_per_unit)
-    for (const item of items) {
-      const [[si]] = await conn.query(
-        'SELECT price_per_unit FROM stock_items WHERE id = ?',
-        [item.stock_item_id]
-      );
-      await conn.query(`
-        INSERT INTO stock_request_items
-          (request_id, stock_item_id, qty_requested, cost_per_unit)
-        VALUES (?, ?, ?, ?)
-      `, [requestId, item.stock_item_id, item.qty, si?.price_per_unit || 0]);
-    }
+    await appendRequestItems(conn, requestId, normalizedItems);
 
     await conn.commit();
-    res.json({ message: 'Pengajuan berhasil', request_id: requestId });
+    res.json({
+      message: existing
+        ? 'Pengajuan berhasil ditambahkan ke permintaan yang masih menunggu'
+        : 'Pengajuan berhasil',
+      request_id: requestId,
+    });
   } catch (err) {
     await conn.rollback();
     res.status(500).json({ message: err.message });

@@ -1,5 +1,9 @@
 const db = require('../config/db');
 const { getRequestBranchId } = require('../utils/branchContext');
+const {
+  mergeNotes,
+  normalizeRequestItems,
+} = require('../utils/stockRequestMerge');
 
 const jakartaDateExpr = (column) =>
   db.isPostgres
@@ -717,9 +721,15 @@ exports.addManualOut = async (req, res) => {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const targetUserId = (req.user.role === 'admin' && user_id) ? Number(user_id) : req.user.id;
     const adminId      = req.user.id;
+    const normalizedItems = normalizeRequestItems(items);
+
+    if (!normalizedItems.length) {
+      await conn.rollback();
+      return res.status(400).json({ message: 'Minimal 1 item' });
+    }
 
     // ── Validasi stok dulu ──
-    for (const item of items) {
+    for (const item of normalizedItems) {
       const stockJoinBranch = branchId ? 'AND ms.branch_id = ?' : '';
       const stockParams = branchId ? [branchId, item.stock_item_id] : [item.stock_item_id];
       const [[si]] = await conn.query(
@@ -755,7 +765,7 @@ exports.addManualOut = async (req, res) => {
     const pendingParams = [targetUserId, today];
     if (branchId) pendingParams.push(branchId);
     const [[existingPending]] = await conn.query(
-      `SELECT id FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
+      `SELECT id, note FROM stock_requests WHERE user_id = ? AND date = ? AND status = 'pending' ${pendingBranchWhere}`,
       pendingParams
     );
 
@@ -768,12 +778,12 @@ exports.addManualOut = async (req, res) => {
       if (note) {
         await conn.query(
           'UPDATE stock_requests SET note = ? WHERE id = ?',
-          [note, reqId]
+          [mergeNotes(existingPending.note, note), reqId]
         );
       }
 
       // ── MERGE items: update qty jika sudah ada, insert jika belum ──
-      for (const item of items) {
+      for (const item of normalizedItems) {
         const [[si]] = await conn.query(
           'SELECT price_per_unit FROM stock_items WHERE id = ?',
           [item.stock_item_id]
@@ -812,7 +822,7 @@ exports.addManualOut = async (req, res) => {
       reqId = reqResult.insertId;
 
       // Insert semua items
-      for (const item of items) {
+      for (const item of normalizedItems) {
         const [[si]] = await conn.query(
           'SELECT price_per_unit FROM stock_items WHERE id = ?',
           [item.stock_item_id]
