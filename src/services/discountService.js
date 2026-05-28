@@ -121,7 +121,7 @@ const validateProgramUsage = async (executor, program, customerPhone = '') => {
   if (!isProgramActiveNow(program)) return { valid: false, message: 'Program diskon sedang tidak aktif' };
 
   const normalizedPhone = normalizePhone(customerPhone);
-  const needsPhone = ['voucher', 'review_reward'].includes(program.type) && Number(program.usage_limit_per_phone || 0) > 0;
+  const needsPhone = ['voucher', 'review_reward', 'bundle'].includes(program.type) && Number(program.usage_limit_per_phone || 0) > 0;
   if (needsPhone && !normalizedPhone) {
     return { valid: false, message: 'Nomor HP wajib diisi untuk klaim diskon ini' };
   }
@@ -141,6 +141,23 @@ const cartHasBundle = (items, bundleIds) => {
   if (!bundleIds.length) return false;
   const cartProductIds = new Set((items || []).map((item) => Number(item.product_id || item.id)).filter(Boolean));
   return bundleIds.every((id) => cartProductIds.has(Number(id)));
+};
+
+const getItemSubtotal = (item) => {
+  const qty = Number(item.qty || 0);
+  const price = Number(item.price || 0);
+  const explicitSubtotal = Number(item.subtotal || 0);
+  return toMoney(explicitSubtotal > 0 ? explicitSubtotal : price * qty);
+};
+
+const getProgramDiscountBase = (subtotal, items, program) => {
+  if (program?.type !== 'bundle') return toMoney(subtotal);
+  const bundleIds = new Set((program.bundle_product_ids || []).map(Number).filter(Boolean));
+  const bundleSubtotal = (items || []).reduce((sum, item) => {
+    const productId = Number(item.product_id || item.id);
+    return bundleIds.has(productId) ? sum + getItemSubtotal(item) : sum;
+  }, 0);
+  return toMoney(bundleSubtotal);
 };
 
 const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = '', customerPhone = '' }) => {
@@ -169,7 +186,8 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
 
   let best = null;
   for (const program of candidates) {
-    if (total < Number(program.min_order_amount || 0)) continue;
+    const discountBase = getProgramDiscountBase(total, items, program);
+    if (discountBase < Number(program.min_order_amount || 0)) continue;
     const usage = await validateProgramUsage(executor, program, customerPhone);
     if (!usage.valid) {
       if (normalizedCode) {
@@ -179,10 +197,11 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
       }
       continue;
     }
-    const amount = calculateAmount(total, program);
+    const amount = calculateAmount(discountBase, program);
     if (amount <= 0) continue;
     const current = {
       program,
+      discount_base: discountBase,
       discount_amount: amount,
       discount_rate: program.discount_type === 'percent' ? Number(program.discount_value || 0) : 0,
       discount_label: program.name,
