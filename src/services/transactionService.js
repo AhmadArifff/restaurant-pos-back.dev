@@ -186,6 +186,24 @@ const { getUserIngredientBalance } = require('./stockAllocationService');
 const buildCheckoutLockKey = (stockOwnerId, branchId) =>
   `pos-checkout:${branchId || 'global'}:${stockOwnerId}`;
 
+const getBranchIngredientBalance = async (executor, stockItemId, branchId = null) => {
+  if (!stockItemId) return 0;
+  const branchWhere = branchId ? 'AND branch_id = ?' : '';
+  const params = [stockItemId];
+  if (branchId) params.push(branchId);
+
+  const [[balance]] = await executor.query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
+    FROM main_stock
+    WHERE stock_item_id = ?
+      ${branchWhere}
+  `, params);
+
+  return Math.max(0, Number(balance?.total || 0));
+};
+
 const acquireCheckoutLock = async (conn, lockKey) => {
   if (db.isPostgres) {
     await conn.query('SELECT pg_advisory_xact_lock(hashtext(?))', [lockKey]);
@@ -293,14 +311,15 @@ const createPosCustomerOrder = async ({ conn, transactionId, invoiceNumber, tabl
 //   âœ“ Fallback safety: GREATEST(0, ...) prevents DB negative but rejects at API level
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId, tableId }) => {
+exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId, tableId, stockMode = 'user' }) => {
   const conn = await db.getConnection();
   let lockKey = null;
   try {
     // â­• BEGIN TRANSACTION - all operations below are atomic
     await conn.beginTransaction();
 
-    const stockOwnerId  = sourceUserId || userId;
+    const usesBranchStock = stockMode === 'branch';
+    const stockOwnerId  = usesBranchStock ? `branch-${branchId || 'global'}` : (sourceUserId || userId);
     let   total         = 0;
     const invoiceNumber = `INV-${Date.now()}`;
     lockKey = buildCheckoutLockKey(stockOwnerId, branchId);
@@ -331,12 +350,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       for (const ing of ings) {
         const neededQty = Number(ing.qty_per_unit) * Number(item.qty);
 
-        const remainingApproved = await getUserIngredientBalance(
-          conn,
-          ing.stock_item_id,
-          stockOwnerId,
-          branchId
-        );
+        const remainingApproved = usesBranchStock
+          ? await getBranchIngredientBalance(conn, ing.stock_item_id, branchId)
+          : await getUserIngredientBalance(conn, ing.stock_item_id, stockOwnerId, branchId);
         
         // âŒ VALIDATION: Check if sufficient stock available
         if (remainingApproved < neededQty) {
@@ -367,7 +383,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       INSERT INTO transactions
         (invoice_number, total_price, payment_method, created_by, source_user_id, branch_id)
       VALUES (?, ?, ?, ?, ?, ?)
-    `, [invoiceNumber, total, payment_method, userId, stockOwnerId, branchId || null]);
+    `, [invoiceNumber, total, payment_method, userId, usesBranchStock ? null : stockOwnerId, branchId || null]);
 
     const transactionId = txResult.insertId;
 

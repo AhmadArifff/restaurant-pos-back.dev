@@ -136,7 +136,7 @@ const buildPublicMenu = async (branchId = null) => {
   return products;
 };
 
-const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSourceUserId }) => {
+const resolveFulfillmentTransaction = async ({ order, actorUserId }) => {
   if (order.transaction_id) return { transaction_id: order.transaction_id, reused: true };
 
   const [items] = await db.query(
@@ -144,54 +144,38 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
     [order.id]
   );
 
-  const [users] = await db.query("SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC");
-  const candidateIds = [
-    requestedSourceUserId,
-    actorUserId,
-    ...users.map((user) => user.id),
-  ]
-    .filter(Boolean)
-    .map((id) => Number(id));
-
-  const uniqueCandidateIds = [...new Set(candidateIds)];
-  let lastError = null;
-
-  for (const sourceUserId of uniqueCandidateIds) {
-    try {
-      return await createTransaction({
-        items: items.map((item) => ({
-          product_id: item.product_id,
-          price: Number(item.price),
-          qty: Number(item.qty),
-        })),
-        payment_method: 'cash',
-        userId: actorUserId,
-        sourceUserId,
-        branchId: order.branch_id || null,
-      });
-    } catch (err) {
-      lastError = err;
-      if (!err.validation_errors) throw err;
-    }
-  }
-
-  const err = new Error('Stok semua kasir belum cukup untuk menerima pesanan ini');
-  err.status_code = 400;
-  const uniqueErrors = new Map();
-  (lastError?.validation_errors || []).forEach((item) => {
-    if (!item?.item_name) return;
-    const available = Number(item.available ?? item.current_balance ?? 0);
-    const needed = Number(item.needed ?? 0);
-    uniqueErrors.set(item.item_name, {
-      item_name: item.item_name,
-      unit: item.unit || '',
-      available: Math.max(0, available),
-      needed,
-      error_code: 'INSUFFICIENT_STOCK',
+  try {
+    return await createTransaction({
+      items: items.map((item) => ({
+        product_id: item.product_id,
+        price: Number(item.price),
+        qty: Number(item.qty),
+      })),
+      payment_method: 'cash',
+      userId: actorUserId,
+      sourceUserId: null,
+      branchId: order.branch_id || null,
+      stockMode: 'branch',
     });
-  });
-  err.validation_errors = [...uniqueErrors.values()];
-  throw err;
+  } catch (lastError) {
+    if (!lastError.validation_errors) throw lastError;
+
+    const err = new Error('Stok cabang belum cukup untuk menerima pesanan ini');
+    err.status_code = 400;
+    const uniqueErrors = new Map();
+    (lastError.validation_errors || []).forEach((item) => {
+      if (!item?.item_name) return;
+      uniqueErrors.set(item.item_name, {
+        item_name: item.item_name,
+        unit: item.unit || '',
+        available: Math.max(0, Number(item.available ?? item.current_balance ?? 0)),
+        needed: Number(item.needed ?? 0),
+        error_code: 'INSUFFICIENT_BRANCH_STOCK',
+      });
+    });
+    err.validation_errors = [...uniqueErrors.values()];
+    throw err;
+  }
 };
 
 exports.listPublicTables = async (req, res) => {
