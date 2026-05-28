@@ -22,6 +22,25 @@ const parseSettingValue = (row) => {
   }
 };
 
+const getDetailText = (details, predicate) => {
+  if (!Array.isArray(details)) return null;
+  const detail = details.find(predicate);
+  if (!detail) return null;
+  if (detail.text) return detail.text;
+  if (Array.isArray(detail.lines)) return detail.lines[0] || null;
+  return null;
+};
+
+const getPhoneFromDetails = (details) => {
+  const phoneDetail = getDetailText(details, (detail) =>
+    String(detail.icon || '').includes('📞')
+    || String(detail.text || '').includes('+62')
+    || (Array.isArray(detail.lines) && detail.lines.some((line) => String(line).includes('+62')))
+  );
+
+  return phoneDetail || null;
+};
+
 const getLandingBranches = async () => {
   const [rows] = await db.query(
     "SELECT setting_value FROM website_settings WHERE setting_key = 'landing_locations' LIMIT 1"
@@ -35,12 +54,10 @@ const getLandingBranches = async () => {
     branch_key: normalizeKey(branch.id || branch.name || `branch-${index + 1}`),
     name: branch.name || branch.tabLabel || `Cabang ${index + 1}`,
     area: branch.area || branch.sectionTag || null,
-    address: Array.isArray(branch.details)
-      ? (branch.details.find((detail) => detail.text)?.text || null)
-      : null,
-    phone: Array.isArray(branch.details)
-      ? (branch.details.find((detail) => Array.isArray(detail.lines))?.lines?.[0] || null)
-      : null,
+    address: getDetailText(branch.details, (detail) =>
+      String(detail.icon || '').includes('📍') || Boolean(detail.text)
+    ),
+    phone: getPhoneFromDetails(branch.details),
   }));
 };
 
@@ -59,6 +76,39 @@ const ensureDefaultBranches = async () => {
 
 exports.ensureDefaultBranches = ensureDefaultBranches;
 
+const syncLandingBranches = async ({ pruneMissing = false } = {}) => {
+  const branches = await getLandingBranches();
+  const activeKeys = [];
+
+  for (const branch of branches) {
+    activeKeys.push(branch.branch_key);
+    const [existing] = await db.query('SELECT id FROM branches WHERE branch_key = ? LIMIT 1', [branch.branch_key]);
+    if (existing.length) {
+      await db.query(`
+        UPDATE branches
+        SET name = ?, area = ?, address = ?, phone = ?, status = 'active'
+        WHERE branch_key = ?
+      `, [branch.name, branch.area || null, branch.address || null, branch.phone || null, branch.branch_key]);
+    } else {
+      await db.query(`
+        INSERT INTO branches (branch_key, name, area, address, phone, status)
+        VALUES (?, ?, ?, ?, ?, 'active')
+      `, [branch.branch_key, branch.name, branch.area || null, branch.address || null, branch.phone || null]);
+    }
+  }
+
+  if (pruneMissing && activeKeys.length) {
+    const placeholders = activeKeys.map(() => '?').join(',');
+    await db.query(
+      `UPDATE branches SET status = 'inactive' WHERE branch_key NOT IN (${placeholders})`,
+      activeKeys
+    );
+  }
+
+  const [rows] = await db.query("SELECT * FROM branches WHERE status = 'active' ORDER BY id ASC");
+  return rows;
+};
+
 exports.list = async (req, res) => {
   try {
     await ensureDefaultBranches();
@@ -66,7 +116,7 @@ exports.list = async (req, res) => {
       SELECT id, branch_key, name, area, address, phone, status, created_at, updated_at
       FROM branches
       WHERE status = 'active'
-      ORDER BY name ASC
+      ORDER BY id ASC
     `);
     res.json(rows);
   } catch (err) {
@@ -76,23 +126,7 @@ exports.list = async (req, res) => {
 
 exports.syncFromLanding = async (req, res) => {
   try {
-    const branches = await getLandingBranches();
-    for (const branch of branches) {
-      const [existing] = await db.query('SELECT id FROM branches WHERE branch_key = ? LIMIT 1', [branch.branch_key]);
-      if (existing.length) {
-        await db.query(`
-          UPDATE branches
-          SET name = ?, area = ?, address = ?, phone = ?, status = 'active'
-          WHERE branch_key = ?
-        `, [branch.name, branch.area || null, branch.address || null, branch.phone || null, branch.branch_key]);
-      } else {
-        await db.query(`
-          INSERT INTO branches (branch_key, name, area, address, phone, status)
-          VALUES (?, ?, ?, ?, ?, 'active')
-        `, [branch.branch_key, branch.name, branch.area || null, branch.address || null, branch.phone || null]);
-      }
-    }
-    const [rows] = await db.query("SELECT * FROM branches WHERE status = 'active' ORDER BY name ASC");
+    const rows = await syncLandingBranches({ pruneMissing: true });
     res.json({ message: 'Cabang berhasil disinkronkan dari landing page', data: rows });
   } catch (err) {
     res.status(500).json({ message: err.message });

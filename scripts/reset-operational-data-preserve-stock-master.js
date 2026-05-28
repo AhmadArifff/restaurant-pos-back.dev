@@ -30,6 +30,78 @@ const deleteIfExists = async (client, table) => {
   console.log(`- reset ${table}`);
 };
 
+const normalizeKey = (value, fallback) => String(value || fallback)
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '')
+  .slice(0, 80);
+
+const getDetailText = (details, predicate) => {
+  if (!Array.isArray(details)) return null;
+  const detail = details.find(predicate);
+  if (!detail) return null;
+  if (detail.text) return detail.text;
+  if (Array.isArray(detail.lines)) return detail.lines[0] || null;
+  return null;
+};
+
+const parseLandingBranches = async (client) => {
+  const { rows } = await client.query(
+    "select setting_value from website_settings where setting_key = 'landing_locations' limit 1"
+  );
+
+  try {
+    const parsed = JSON.parse(rows[0]?.setting_value || '{}');
+    const branches = Array.isArray(parsed?.branches) ? parsed.branches : [];
+    return branches.map((branch, index) => ({
+      branch_key: normalizeKey(branch.id || branch.name, `branch-${index + 1}`),
+      name: branch.name || branch.tabLabel || `Cabang ${index + 1}`,
+      area: branch.area || branch.sectionTag || null,
+      address: getDetailText(branch.details, (detail) =>
+        String(detail.icon || '').includes('📍') || Boolean(detail.text)
+      ),
+      phone: getDetailText(branch.details, (detail) =>
+        String(detail.icon || '').includes('📞')
+        || String(detail.text || '').includes('+62')
+        || (Array.isArray(detail.lines) && detail.lines.some((line) => String(line).includes('+62')))
+      ),
+    }));
+  } catch {
+    return [];
+  }
+};
+
+const syncBranchesFromLanding = async (client) => {
+  const branches = await parseLandingBranches(client);
+  if (!branches.length) return [];
+
+  const activeKeys = [];
+  for (const branch of branches) {
+    activeKeys.push(branch.branch_key);
+    const { rows } = await client.query('select id from branches where branch_key = $1 limit 1', [branch.branch_key]);
+    if (rows.length) {
+      await client.query(`
+        update branches
+        set name = $1, area = $2, address = $3, phone = $4, status = 'active'
+        where branch_key = $5
+      `, [branch.name, branch.area, branch.address, branch.phone, branch.branch_key]);
+    } else {
+      await client.query(`
+        insert into branches (branch_key, name, area, address, phone, status)
+        values ($1, $2, $3, $4, $5, 'active')
+      `, [branch.branch_key, branch.name, branch.area, branch.address, branch.phone]);
+    }
+  }
+
+  await client.query(
+    'update branches set status = \'inactive\' where not (branch_key = any($1::text[]))',
+    [activeKeys]
+  );
+
+  console.log(`- sync branches from landing page: ${activeKeys.length} cabang aktif`);
+  return activeKeys;
+};
+
 const getStockSnapshots = async (client) => {
   const { rows } = await client.query(`
     select
@@ -76,6 +148,8 @@ const reset = async () => {
     const { rows: actorRows } = await client.query('select id from users order by id limit 1');
     const actorId = actorRows[0]?.id;
     if (!actorId) throw new Error('Tidak ada user untuk mencatat saldo awal stok.');
+
+    await syncBranchesFromLanding(client);
 
     const { rows: branchRows } = await client.query("select id from branches where status = 'active' order by id limit 1");
     const fallbackBranchId = branchRows[0]?.id || null;
