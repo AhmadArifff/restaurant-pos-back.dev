@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
+const { getUserIngredientBalance } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
 
 const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
@@ -85,23 +86,11 @@ const getOrderRowById = async (id) => {
   return rows[0] || null;
 };
 
-const getBranchIngredientBalance = async (stockItemId, branchId) => {
-  const branchWhere = branchId ? 'AND branch_id = ?' : '';
-  const params = [stockItemId];
-  if (branchId) params.push(branchId);
-  const [[balance]] = await db.query(`
-    SELECT
-      COALESCE(SUM(CASE WHEN type = 'in' THEN qty ELSE 0 END), 0) -
-      COALESCE(SUM(CASE WHEN type = 'out' THEN qty ELSE 0 END), 0) AS total
-    FROM main_stock
-    WHERE stock_item_id = ?
-      ${branchWhere}
-  `, params);
-
-  return Math.max(0, Number(balance?.total || 0));
-};
-
 const buildPublicMenu = async (branchId = null) => {
+  const [stockUsers] = await db.query(
+    "SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC"
+  );
+
   const [products] = await db.query(`
     SELECT p.*, c.name AS category_name
     FROM products p
@@ -124,19 +113,42 @@ const buildPublicMenu = async (branchId = null) => {
       continue;
     }
 
-    let canMake = Infinity;
-    for (const ingredient of ingredients) {
-      const remaining = await getBranchIngredientBalance(ingredient.stock_item_id, branchId);
-      canMake = Math.min(canMake, Math.floor(remaining / Number(ingredient.qty || 1)));
+    let bestReadyStock = 0;
+    let bestReadyUser = null;
+    const stockByUser = [];
+
+    for (const user of stockUsers) {
+      let canMake = Infinity;
+      for (const ingredient of ingredients) {
+        const remaining = await getUserIngredientBalance(db, ingredient.stock_item_id, user.id, branchId);
+        canMake = Math.min(canMake, Math.floor(remaining / Number(ingredient.qty || 1)));
+      }
+
+      const ready = canMake === Infinity ? 0 : Math.max(0, canMake);
+      stockByUser.push({
+        user_id: user.id,
+        user_name: user.name,
+        role: user.role,
+        can_make: ready,
+      });
+
+      if (ready > bestReadyStock) {
+        bestReadyStock = ready;
+        bestReadyUser = user;
+      }
     }
 
-    product.stock = canMake === Infinity ? 0 : canMake;
+    product.stock = bestReadyStock;
+    product.stock_source_user = bestReadyUser
+      ? { user_id: bestReadyUser.id, user_name: bestReadyUser.name, role: bestReadyUser.role }
+      : null;
+    product.stock_by_user = stockByUser;
   }
 
   return products;
 };
 
-const resolveFulfillmentTransaction = async ({ order, actorUserId }) => {
+const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSourceUserId }) => {
   if (order.transaction_id) return { transaction_id: order.transaction_id, reused: true };
 
   const [items] = await db.query(
@@ -144,38 +156,52 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId }) => {
     [order.id]
   );
 
-  try {
-    return await createTransaction({
-      items: items.map((item) => ({
-        product_id: item.product_id,
-        price: Number(item.price),
-        qty: Number(item.qty),
-      })),
-      payment_method: 'cash',
-      userId: actorUserId,
-      sourceUserId: null,
-      branchId: order.branch_id || null,
-      stockMode: 'branch',
-    });
-  } catch (lastError) {
-    if (!lastError.validation_errors) throw lastError;
+  const [users] = await db.query("SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC");
+  const candidateIds = [
+    requestedSourceUserId,
+    actorUserId,
+    ...users.map((user) => user.id),
+  ]
+    .filter(Boolean)
+    .map((id) => Number(id));
 
-    const err = new Error('Stok cabang belum cukup untuk menerima pesanan ini');
-    err.status_code = 400;
-    const uniqueErrors = new Map();
-    (lastError.validation_errors || []).forEach((item) => {
-      if (!item?.item_name) return;
-      uniqueErrors.set(item.item_name, {
-        item_name: item.item_name,
-        unit: item.unit || '',
-        available: Math.max(0, Number(item.available ?? item.current_balance ?? 0)),
-        needed: Number(item.needed ?? 0),
-        error_code: 'INSUFFICIENT_BRANCH_STOCK',
+  const uniqueCandidateIds = [...new Set(candidateIds)];
+  let lastError = null;
+
+  for (const sourceUserId of uniqueCandidateIds) {
+    try {
+      return await createTransaction({
+        items: items.map((item) => ({
+          product_id: item.product_id,
+          price: Number(item.price),
+          qty: Number(item.qty),
+        })),
+        payment_method: 'cash',
+        userId: actorUserId,
+        sourceUserId,
+        branchId: order.branch_id || null,
       });
-    });
-    err.validation_errors = [...uniqueErrors.values()];
-    throw err;
+    } catch (err) {
+      lastError = err;
+      if (!err.validation_errors) throw err;
+    }
   }
+
+  const err = new Error('Stok siap jual cabang belum cukup untuk menerima pesanan ini');
+  err.status_code = 400;
+  const uniqueErrors = new Map();
+  (lastError?.validation_errors || []).forEach((item) => {
+    if (!item?.item_name) return;
+    uniqueErrors.set(item.item_name, {
+      item_name: item.item_name,
+      unit: item.unit || '',
+      available: Math.max(0, Number(item.available ?? item.current_balance ?? 0)),
+      needed: Number(item.needed ?? 0),
+      error_code: 'INSUFFICIENT_READY_STOCK',
+    });
+  });
+  err.validation_errors = [...uniqueErrors.values()];
+  throw err;
 };
 
 exports.listPublicTables = async (req, res) => {
@@ -187,14 +213,25 @@ exports.listPublicTables = async (req, res) => {
       ? 'table_number ASC'
       : 'CAST(table_number AS UNSIGNED), table_number';
     const [rows] = await db.query(`
-      SELECT dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id,
+      SELECT
+        dt.id,
+        dt.table_number,
+        dt.table_name,
+        dt.capacity,
+        dt.qr_token,
+        dt.status,
+        dt.branch_id,
+        b.name AS branch_name,
+        b.area AS branch_area,
+        b.address AS branch_address,
         COUNT(co.id) AS active_orders
       FROM dining_tables dt
+      LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
         AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
       WHERE dt.status = 'active'
         ${branchWhere}
-      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, b.area, b.address
       ORDER BY ${orderBy}
     `, params);
     res.json(rows.map((row) => ({
@@ -210,13 +247,24 @@ exports.listPublicTables = async (req, res) => {
 exports.getPublicTableByToken = async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id,
+      SELECT
+        dt.id,
+        dt.table_number,
+        dt.table_name,
+        dt.capacity,
+        dt.qr_token,
+        dt.status,
+        dt.branch_id,
+        b.name AS branch_name,
+        b.area AS branch_area,
+        b.address AS branch_address,
         COUNT(co.id) AS active_orders
       FROM dining_tables dt
+      LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
         AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
       WHERE dt.qr_token = ? AND dt.status = 'active'
-      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, b.area, b.address
       LIMIT 1
     `, [req.params.token]);
 
