@@ -15,13 +15,28 @@ const sanitizeDiscountType = (value) => (
   ['percent', 'fixed'].includes(value) ? value : 'percent'
 );
 
+const JAKARTA_OFFSET_MINUTES = 7 * 60;
+
+const formatSqlDateTime = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+
+const jakartaLocalToUtc = (datePart, timePart, secondsPart = '00') => {
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+  const second = Number(secondsPart || 0);
+  return new Date(Date.UTC(year, month - 1, day, hour, minute - JAKARTA_OFFSET_MINUTES, second));
+};
+
 const sanitizeDateTime = (value) => {
   if (!value) return null;
   const localDateTime = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2}))?/);
-  if (localDateTime) return `${localDateTime[1]} ${localDateTime[2]}:${localDateTime[3] || '00'}`;
+  if (localDateTime) {
+    const jakartaDate = jakartaLocalToUtc(localDateTime[1], localDateTime[2], localDateTime[3]);
+    if (Number.isNaN(jakartaDate.getTime())) return null;
+    return db.isPostgres ? jakartaDate.toISOString() : `${localDateTime[1]} ${localDateTime[2]}:${localDateTime[3] || '00'}`;
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 19).replace('T', ' ');
+  return db.isPostgres ? date.toISOString() : formatSqlDateTime(date);
 };
 
 const toProgramPayload = (body = {}) => {
@@ -75,10 +90,11 @@ const ignoreSchemaExistsError = (err) => (
 
 const ensureDiscountValiditySchema = async () => {
   if (discountValiditySchemaReady) return;
+  const dateType = db.isPostgres ? 'TIMESTAMPTZ' : 'DATETIME';
 
   const statements = [
-    'ALTER TABLE discount_programs ADD COLUMN start_at TIMESTAMP NULL',
-    'ALTER TABLE discount_programs ADD COLUMN end_at TIMESTAMP NULL',
+    `ALTER TABLE discount_programs ADD COLUMN start_at ${dateType} NULL`,
+    `ALTER TABLE discount_programs ADD COLUMN end_at ${dateType} NULL`,
     'CREATE INDEX idx_discount_programs_status_dates ON discount_programs (status, start_at, end_at)',
   ];
 
