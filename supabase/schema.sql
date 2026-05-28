@@ -43,6 +43,14 @@ DO $$ BEGIN
   CREATE TYPE branch_status AS ENUM ('active', 'inactive');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+DO $$ BEGIN
+  CREATE TYPE discount_program_type AS ENUM ('review_reward', 'voucher', 'bundle');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+DO $$ BEGIN
+  CREATE TYPE discount_value_type AS ENUM ('percent', 'fixed');
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
 create table if not exists branches (
   id bigserial primary key,
   branch_key varchar(100) unique not null,
@@ -276,13 +284,56 @@ create table if not exists customer_order_item_reviews (
   created_at timestamptz default now()
 );
 
+create table if not exists discount_programs (
+  id bigserial primary key,
+  name varchar(160) not null,
+  type discount_program_type not null default 'voucher',
+  code varchar(80) unique null,
+  discount_type discount_value_type not null default 'percent',
+  discount_value numeric(12,2) not null default 0,
+  min_order_amount numeric(12,2) not null default 0,
+  usage_limit_per_phone integer not null default 1,
+  total_usage_limit integer null,
+  min_service_rating integer not null default 1,
+  min_menu_rating integer not null default 1,
+  bundle_product_ids text null,
+  status branch_status not null default 'active',
+  note text null,
+  created_by bigint null references users(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists discount_redemptions (
+  id bigserial primary key,
+  program_id bigint not null references discount_programs(id) on delete cascade,
+  order_id bigint null references customer_orders(id) on delete set null,
+  transaction_id bigint null references transactions(id) on delete set null,
+  customer_phone varchar(40) null,
+  normalized_phone varchar(40) null,
+  voucher_code varchar(80) null,
+  subtotal numeric(12,2) not null default 0,
+  discount_amount numeric(12,2) not null default 0,
+  created_by bigint null references users(id) on delete set null,
+  created_at timestamptz default now()
+);
+
 alter table users add column if not exists default_branch_id bigint null references branches(id) on delete set null;
 alter table dining_tables add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table customer_orders add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table customer_orders add column if not exists cancel_reason text null;
 alter table customer_orders add column if not exists cancelled_by bigint null references users(id) on delete set null;
 alter table customer_orders add column if not exists cancelled_at timestamptz null;
+alter table customer_orders add column if not exists discount_label varchar(160) null;
+alter table customer_orders add column if not exists discount_program_id bigint null references discount_programs(id) on delete set null;
+alter table customer_orders add column if not exists voucher_code varchar(80) null;
 alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table transactions add column if not exists discount_rate numeric(5,2) not null default 0;
+alter table transactions add column if not exists discount_amount numeric(12,2) not null default 0;
+alter table transactions add column if not exists discount_label varchar(160) null;
+alter table transactions add column if not exists discount_program_id bigint null references discount_programs(id) on delete set null;
+alter table transactions add column if not exists voucher_code varchar(80) null;
+alter table transactions add column if not exists customer_phone varchar(40) null;
 alter table main_stock add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table stock_requests add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table dining_tables drop constraint if exists dining_tables_table_number_key;
@@ -311,6 +362,9 @@ create index if not exists idx_customer_orders_table_id on customer_orders(table
 create index if not exists idx_customer_orders_branch on customer_orders(branch_id);
 create index if not exists idx_customer_orders_created_at on customer_orders(created_at);
 create index if not exists idx_customer_order_items_order_id on customer_order_items(order_id);
+create index if not exists idx_discount_redemptions_phone on discount_redemptions(program_id, normalized_phone);
+create index if not exists idx_discount_redemptions_transaction on discount_redemptions(transaction_id);
+create index if not exists idx_discount_redemptions_order on discount_redemptions(order_id);
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -340,6 +394,11 @@ create trigger set_customer_orders_updated_at
 before update on customer_orders
 for each row execute function set_updated_at();
 
+drop trigger if exists set_discount_programs_updated_at on discount_programs;
+create trigger set_discount_programs_updated_at
+before update on discount_programs
+for each row execute function set_updated_at();
+
 insert into dining_tables (table_number, table_name, capacity, qr_token, status)
 select
   lpad(gs::text, 2, '0'),
@@ -356,3 +415,10 @@ update customer_orders set branch_id = (select id from branches order by id limi
 update transactions set branch_id = (select id from branches order by id limit 1) where branch_id is null;
 update main_stock set branch_id = (select id from branches order by id limit 1) where branch_id is null;
 update stock_requests set branch_id = (select id from branches order by id limit 1) where branch_id is null;
+
+insert into discount_programs
+  (name, type, discount_type, discount_value, usage_limit_per_phone, min_service_rating, min_menu_rating, status, note)
+select
+  'Reward Review Pelanggan', 'review_reward', 'percent', 5, 1, 1, 1, 'active',
+  'Diskon otomatis setelah pelanggan memberi rating pelayanan dan menu pesanan.'
+where not exists (select 1 from discount_programs where type = 'review_reward');

@@ -301,6 +301,51 @@ const getPaymentMix = async (start, end) => {
   }));
 };
 
+const getDiscountSummary = async (start, end, branchId = null) => {
+  const discountDate = jakartaDateExpr('COALESCE(t.created_at, co.created_at, dr.created_at)');
+  const branchFilter = branchId ? 'AND COALESCE(t.branch_id, co.branch_id) = ?' : '';
+  const params = branchId ? [start, end, branchId] : [start, end];
+
+  const [[row]] = await db.query(`
+    SELECT
+      COUNT(*) AS total_orders,
+      COALESCE(SUM(dr.discount_amount), 0) AS total_discount,
+      COALESCE(AVG(NULLIF((dr.discount_amount / NULLIF(dr.subtotal, 0)) * 100, 0)), 0) AS avg_discount_rate
+    FROM discount_redemptions dr
+    LEFT JOIN customer_orders co ON co.id = dr.order_id
+    LEFT JOIN transactions t ON t.id = dr.transaction_id
+    WHERE ${discountDate} BETWEEN ? AND ?
+      AND COALESCE(dr.discount_amount, 0) > 0
+      ${branchFilter}
+  `, params);
+
+  const [byType] = await db.query(`
+    SELECT dp.type,
+      COUNT(*) AS total_orders,
+      COALESCE(SUM(dr.discount_amount), 0) AS total_discount
+    FROM discount_redemptions dr
+    JOIN discount_programs dp ON dp.id = dr.program_id
+    LEFT JOIN customer_orders co ON co.id = dr.order_id
+    LEFT JOIN transactions t ON t.id = dr.transaction_id
+    WHERE ${discountDate} BETWEEN ? AND ?
+      AND COALESCE(dr.discount_amount, 0) > 0
+      ${branchFilter}
+    GROUP BY dp.type
+    ORDER BY total_discount DESC
+  `, params);
+
+  return {
+    total_orders: Number(row?.total_orders || 0),
+    total_discount: Math.round(money(row?.total_discount || 0)),
+    avg_discount_rate: pct(row?.avg_discount_rate || 0),
+    by_type: byType.map((item) => ({
+      type: item.type,
+      total_orders: Number(item.total_orders || 0),
+      total_discount: Math.round(money(item.total_discount || 0)),
+    })),
+  };
+};
+
 const getLowStockItems = async () => {
   const [rows] = await db.query(`
     SELECT id, name, stock, min_stock, unit, price_per_unit
@@ -368,7 +413,7 @@ const getAttendanceSummary = async (start, end) => {
   }));
 };
 
-const buildInsights = ({ current, previous, series, bestProducts, lowStockItems, cashierPerformance }) => {
+const buildInsights = ({ current, previous, series, bestProducts, lowStockItems, cashierPerformance, discounts }) => {
   const growth = previous.revenue > 0
     ? ((current.revenue - previous.revenue) / previous.revenue) * 100
     : current.revenue > 0 ? 100 : 0;
@@ -431,6 +476,14 @@ const buildInsights = ({ current, previous, series, bestProducts, lowStockItems,
     });
   }
 
+  if (discounts?.total_discount > 0) {
+    insights.push({
+      title: 'Program review menghasilkan distribusi diskon',
+      severity: 'info',
+      text: `${discounts.total_orders} pesanan sudah direview dengan total distribusi diskon ${formatCurrency(discounts.total_discount)}. Ini bisa dibaca sebagai biaya kecil untuk mendapatkan feedback pelanggan.`,
+    });
+  }
+
   return {
     growth_pct: pct(growth),
     insights,
@@ -439,7 +492,8 @@ const buildInsights = ({ current, previous, series, bestProducts, lowStockItems,
 
 const buildBusinessReportData = async ({ period = 'daily', month, year }) => {
   const range = getPeriodRange(period, month, year);
-  const [current, previous, series, bestProducts, cashierPerformance, paymentMix, lowStockItems, attendanceSummary, trend7Days, trend30Days, trend12Months] =
+  const branchId = null;
+  const [current, previous, series, bestProducts, cashierPerformance, paymentMix, discounts, lowStockItems, attendanceSummary, trend7Days, trend30Days, trend12Months] =
     await Promise.all([
       getTotals(range.start, range.end),
       getTotals(range.prevStart, range.prevEnd),
@@ -447,6 +501,7 @@ const buildBusinessReportData = async ({ period = 'daily', month, year }) => {
       getBestProducts(range.start, range.end),
       getCashierPerformance(range.start, range.end),
       getPaymentMix(range.start, range.end),
+      getDiscountSummary(range.start, range.end, branchId),
       getLowStockItems(),
       getAttendanceSummary(range.start, range.end),
       getTrailingDailyTrend(7),
@@ -454,7 +509,7 @@ const buildBusinessReportData = async ({ period = 'daily', month, year }) => {
       getTrailingMonthlyTrend(12),
     ]);
 
-  const analysis = buildInsights({ current, previous, series, bestProducts, lowStockItems, cashierPerformance });
+  const analysis = buildInsights({ current, previous, series, bestProducts, lowStockItems, cashierPerformance, discounts });
 
   return {
     period,
@@ -469,6 +524,7 @@ const buildBusinessReportData = async ({ period = 'daily', month, year }) => {
     best_products: bestProducts,
     cashier_performance: cashierPerformance,
     payment_mix: paymentMix,
+    discounts,
     low_stock_items: lowStockItems,
     attendance_summary: attendanceSummary,
     trends: {
@@ -621,6 +677,36 @@ exports.todayStats = async (req, res) => {
       hpp:        Math.round(totalHPP),
       margin:     Math.round(margin),
       margin_pct: revenue > 0 ? Math.round((margin / revenue) * 100) : 0,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.discountSummary = async (req, res) => {
+  try {
+    const jakartaNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const today = toSqlDate(jakartaNow);
+    const year = Number(req.query.year || jakartaNow.getFullYear());
+    const month = Number(req.query.month || jakartaNow.getMonth() + 1);
+    const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
+    const monthStart = toSqlDate(new Date(year, month - 1, 1));
+    const monthEnd = toSqlDate(new Date(year, month, 0));
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+
+    const [todayData, monthData, yearData, allTime] = await Promise.all([
+      getDiscountSummary(today, today, branchId),
+      getDiscountSummary(monthStart, monthEnd, branchId),
+      getDiscountSummary(yearStart, yearEnd, branchId),
+      getDiscountSummary('1970-01-01', '2999-12-31', branchId),
+    ]);
+
+    res.json({
+      today: todayData,
+      month: monthData,
+      year: yearData,
+      all_time: allTime,
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -846,13 +932,14 @@ const ensureSpace = (doc, y, needed = 80) => {
 const drawAccountingTable = (doc, y, data) => {
   const rows = [
     ['Total Revenue', data.summary.revenue],
+    ['Review Discount Distributed', -data.discounts.total_discount],
     ['Cost of Goods Sold (HPP)', -data.summary.hpp],
     ['Gross Profit', data.summary.gross_profit],
     ['Average Order Value', data.summary.avg_order_value],
   ];
 
   doc
-    .roundedRect(42, y, 511, 116, 6)
+    .roundedRect(42, y, 511, 134, 6)
     .fillAndStroke('#FFFFFF', '#E2E8F0');
 
   doc
@@ -864,7 +951,7 @@ const drawAccountingTable = (doc, y, data) => {
   let rowY = y + 38;
   rows.forEach(([label, value], index) => {
     const isProfit = label === 'Gross Profit';
-    if (index === 2) {
+    if (index === 3) {
       doc.moveTo(58, rowY - 6).lineTo(537, rowY - 6).strokeColor('#CBD5E1').stroke();
     }
 
@@ -884,9 +971,9 @@ const drawAccountingTable = (doc, y, data) => {
     .fillColor('#64748B')
     .font('Helvetica')
     .fontSize(8)
-    .text(`Gross margin: ${data.summary.margin_pct}%`, 58, y + 96);
+    .text(`Gross margin: ${data.summary.margin_pct}% · Review discount: ${formatCurrency(data.discounts.total_discount)} from ${data.discounts.total_orders} reviewed orders`, 58, y + 114);
 
-  return y + 134;
+  return y + 152;
 };
 
 const drawLineChart = (doc, title, rows, x, y, width, height) => {
@@ -985,10 +1072,11 @@ exports.businessAnalysisPdf = async (req, res) => {
       .text('GROWTH VS PERIODE SEBELUMNYA', 426, 78, { width: 110, align: 'right' });
 
     let y = 125;
-    drawMetric(doc, 42, y, 'Total Omzet', formatCurrency(data.summary.revenue));
-    drawMetric(doc, 176, y, 'Gross Profit', formatCurrency(data.summary.gross_profit));
-    drawMetric(doc, 310, y, 'Margin', `${data.summary.margin_pct}%`);
-    drawMetric(doc, 444, y, 'Transaksi', `${data.summary.total_trx} trx`, 109);
+    drawMetric(doc, 42, y, 'Total Omzet', formatCurrency(data.summary.revenue), 96);
+    drawMetric(doc, 145, y, 'Gross Profit', formatCurrency(data.summary.gross_profit), 96);
+    drawMetric(doc, 248, y, 'Margin', `${data.summary.margin_pct}%`, 96);
+    drawMetric(doc, 351, y, 'Transaksi', `${data.summary.total_trx} trx`, 96);
+    drawMetric(doc, 454, y, 'Diskon Review', formatCurrency(data.discounts.total_discount), 99);
 
     y += 82;
     y = drawAccountingTable(doc, y, data);

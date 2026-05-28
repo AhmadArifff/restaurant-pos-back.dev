@@ -3,6 +3,13 @@ const db = require('../config/db');
 const { createTransaction } = require('../services/transactionService');
 const { getUserIngredientBalance } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
+const {
+  calculateAmount,
+  findBestDiscount,
+  getReviewProgram,
+  recordRedemption,
+  validateProgramUsage,
+} = require('../services/discountService');
 
 const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
 const STAFF_ORDER_STATUSES = ['accepted', 'preparing', 'ready', 'completed', 'cancelled'];
@@ -170,7 +177,7 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 
   for (const sourceUserId of uniqueCandidateIds) {
     try {
-      return await createTransaction({
+      const result = await createTransaction({
         items: items.map((item) => ({
           product_id: item.product_id,
           price: Number(item.price),
@@ -180,7 +187,31 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
         userId: actorUserId,
         sourceUserId,
         branchId: order.branch_id || null,
+        skipDiscount: true,
       });
+      if (Number(order.discount_amount || 0) > 0) {
+        await db.query(`
+          UPDATE transactions
+          SET total_price = ?,
+              discount_rate = ?,
+              discount_amount = ?,
+              discount_label = ?,
+              discount_program_id = ?,
+              voucher_code = ?,
+              customer_phone = ?
+          WHERE id = ?
+        `, [
+          order.final_total,
+          order.discount_rate || 0,
+          order.discount_amount || 0,
+          order.discount_label || null,
+          order.discount_program_id || null,
+          order.voucher_code || null,
+          order.customer_phone || null,
+          result.transaction_id,
+        ]);
+      }
+      return result;
     } catch (err) {
       lastError = err;
       if (!err.validation_errors) throw err;
@@ -291,7 +322,7 @@ exports.getPublicMenu = async (req, res) => {
 exports.createOrder = async (req, res) => {
   const conn = await db.getConnection();
   try {
-    const { table_token, customer_name, customer_phone, note, items } = req.body;
+    const { table_token, customer_name, customer_phone, note, items, voucher_code } = req.body;
 
     if (!table_token) return res.status(400).json({ message: 'Token meja wajib diisi' });
     if (!Array.isArray(items) || items.length === 0) {
@@ -355,11 +386,21 @@ exports.createOrder = async (req, res) => {
     }
 
     subtotal = toMoney(subtotal);
+    const discount = await findBestDiscount({
+      executor: conn,
+      subtotal,
+      items: orderItems,
+      voucherCode: voucher_code || '',
+      customerPhone: customer_phone || '',
+    });
+    const discountAmount = Number(discount?.discount_amount || 0);
+    const finalTotal = toMoney(subtotal - discountAmount);
     const orderCode = makeOrderCode();
     const [orderResult] = await conn.query(`
       INSERT INTO customer_orders
-        (order_code, table_id, branch_id, customer_name, customer_phone, subtotal, final_total, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (order_code, table_id, branch_id, customer_name, customer_phone, subtotal, discount_rate,
+         discount_amount, final_total, discount_label, discount_program_id, voucher_code, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       orderCode,
       tables[0].id,
@@ -367,7 +408,12 @@ exports.createOrder = async (req, res) => {
       customer_name ? String(customer_name).trim() : null,
       customer_phone ? String(customer_phone).trim() : null,
       subtotal,
-      subtotal,
+      discount?.discount_rate || 0,
+      discountAmount,
+      finalTotal,
+      discount?.discount_label || null,
+      discount?.program?.id || null,
+      discount?.voucher_code || null,
       note ? String(note).trim() : null,
     ]);
 
@@ -378,6 +424,18 @@ exports.createOrder = async (req, res) => {
           (order_id, product_id, product_name, price, qty, subtotal, note)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `, [orderId, item.product_id, item.product_name, item.price, item.qty, item.subtotal, item.note]);
+    }
+
+    if (discount?.program?.id) {
+      await recordRedemption({
+        executor: conn,
+        program: discount.program,
+        orderId,
+        customerPhone: customer_phone || '',
+        subtotal,
+        discountAmount,
+        voucherCode: discount.voucher_code,
+      });
     }
 
     await conn.commit();
@@ -432,6 +490,24 @@ exports.submitReview = async (req, res) => {
     }
 
     await conn.beginTransaction();
+    const reviewProgram = await getReviewProgram(conn);
+    const reviewPhone = req.body.customer_phone || order.customer_phone || '';
+    const usage = reviewProgram?.id
+      ? await validateProgramUsage(conn, reviewProgram, reviewPhone)
+      : { valid: true };
+    if (!usage.valid) {
+      const err = new Error(usage.message);
+      err.status_code = 400;
+      throw err;
+    }
+
+    const minMenuRating = Number(reviewProgram.min_menu_rating || 1);
+    const minServiceRating = Number(reviewProgram.min_service_rating || 1);
+    if (serviceRating < minServiceRating) {
+      const err = new Error(`Rating pelayanan minimal ${minServiceRating} untuk klaim diskon review`);
+      err.status_code = 400;
+      throw err;
+    }
 
     await conn.query(`
       INSERT INTO customer_order_reviews (order_id, service_rating, service_comment)
@@ -445,6 +521,11 @@ exports.submitReview = async (req, res) => {
       const rating = Number(review.rating);
       if (!orderItem || rating < 1 || rating > 5) {
         const err = new Error('Review menu tidak valid');
+        err.status_code = 400;
+        throw err;
+      }
+      if (rating < minMenuRating) {
+        const err = new Error(`Rating menu minimal ${minMenuRating} untuk klaim diskon review`);
         err.status_code = 400;
         throw err;
       }
@@ -462,29 +543,60 @@ exports.submitReview = async (req, res) => {
       ]);
     }
 
-    const discountAmount = toMoney(Number(order.subtotal) * (REVIEW_DISCOUNT_RATE / 100));
+    const reviewDiscountAmount = calculateAmount(Number(order.subtotal), reviewProgram);
+    const existingDiscountAmount = Number(order.discount_amount || 0);
+    const discountAmount = toMoney(Math.min(Number(order.subtotal), existingDiscountAmount + reviewDiscountAmount));
     const finalTotal = toMoney(Number(order.subtotal) - discountAmount);
+    const discountRate = reviewProgram.discount_type === 'percent'
+      ? Number(reviewProgram.discount_value || REVIEW_DISCOUNT_RATE)
+      : Number(order.discount_rate || 0);
+    const discountLabel = order.discount_label
+      ? `${order.discount_label} + ${reviewProgram.name}`
+      : reviewProgram.name;
 
     await conn.query(`
       UPDATE customer_orders
       SET discount_rate = ?,
           discount_amount = ?,
           final_total = ?,
+          discount_label = ?,
+          discount_program_id = COALESCE(discount_program_id, ?),
+          customer_phone = COALESCE(customer_phone, ?),
           reviewed_at = NOW()
       WHERE id = ?
-    `, [REVIEW_DISCOUNT_RATE, discountAmount, finalTotal, order.id]);
+    `, [discountRate, discountAmount, finalTotal, discountLabel, reviewProgram.id || null, reviewPhone || null, order.id]);
 
     if (order.transaction_id) {
-      await conn.query('UPDATE transactions SET total_price = ? WHERE id = ?', [finalTotal, order.transaction_id]);
+      await conn.query(`
+        UPDATE transactions
+        SET total_price = ?,
+            discount_rate = ?,
+            discount_amount = ?,
+            discount_label = ?
+        WHERE id = ?
+      `, [finalTotal, discountRate, discountAmount, discountLabel, order.transaction_id]);
+    }
+
+    if (reviewProgram?.id && reviewDiscountAmount > 0) {
+      await recordRedemption({
+        executor: conn,
+        program: reviewProgram,
+        orderId: order.id,
+        transactionId: order.transaction_id || null,
+        customerPhone: reviewPhone,
+        subtotal: Number(order.subtotal || 0),
+        discountAmount: reviewDiscountAmount,
+        createdBy: null,
+      });
     }
 
     await conn.commit();
 
     const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
     res.json({
-      message: 'Terima kasih atas review Anda. Diskon 5% sudah diterapkan.',
-      discount_rate: REVIEW_DISCOUNT_RATE,
-      discount_amount: discountAmount,
+      message: `Terima kasih atas review Anda. ${reviewProgram.name} berhasil diterapkan.`,
+      discount_rate: discountRate,
+      discount_amount: reviewDiscountAmount,
       data: updated,
     });
   } catch (err) {

@@ -182,6 +182,7 @@
 const crypto = require('crypto');
 const db = require('../config/db');
 const { getUserIngredientBalance } = require('./stockAllocationService');
+const { findBestDiscount, recordRedemption } = require('./discountService');
 
 const buildCheckoutLockKey = (stockOwnerId, branchId) =>
   `pos-checkout:${branchId || 'global'}:${stockOwnerId}`;
@@ -227,7 +228,19 @@ const releaseCheckoutLock = async (conn, lockKey) => {
 
 const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
-const createPosCustomerOrder = async ({ conn, transactionId, invoiceNumber, tableId, branchId, userId, items, total }) => {
+const createPosCustomerOrder = async ({
+  conn,
+  transactionId,
+  invoiceNumber,
+  tableId,
+  branchId,
+  userId,
+  items,
+  subtotal,
+  finalTotal,
+  customerPhone,
+  discount,
+}) => {
   if (!tableId) return null;
 
   const [tables] = await conn.query(
@@ -264,18 +277,24 @@ const createPosCustomerOrder = async ({ conn, transactionId, invoiceNumber, tabl
   const [orderResult] = await conn.query(`
     INSERT INTO customer_orders
       (order_code, table_id, branch_id, customer_name, subtotal, final_total, status,
-       payment_status, transaction_id, note, accepted_by, accepted_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'paid', ?, ?, ?, NOW())
+       payment_status, transaction_id, note, accepted_by, accepted_at, discount_rate,
+       discount_amount, discount_label, discount_program_id, voucher_code)
+    VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'paid', ?, ?, ?, NOW(), ?, ?, ?, ?, ?)
   `, [
     orderCode,
     tableId,
     branchId || table.branch_id || null,
     'Pelanggan POS',
-    total,
-    total,
+    subtotal,
+    finalTotal,
     transactionId,
     `Pesanan dibuat dari POS - ${invoiceNumber}`,
     userId,
+    discount?.discount_rate || 0,
+    discount?.discount_amount || 0,
+    discount?.discount_label || null,
+    discount?.program?.id || null,
+    discount?.voucher_code || null,
   ]);
 
   const orderId = orderResult.insertId;
@@ -311,7 +330,18 @@ const createPosCustomerOrder = async ({ conn, transactionId, invoiceNumber, tabl
 //   âœ“ Fallback safety: GREATEST(0, ...) prevents DB negative but rejects at API level
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId, tableId, stockMode = 'user' }) => {
+exports.createTransaction = async ({
+  items,
+  payment_method,
+  userId,
+  sourceUserId,
+  branchId,
+  tableId,
+  stockMode = 'user',
+  customerPhone = '',
+  voucherCode = '',
+  skipDiscount = false,
+}) => {
   const conn = await db.getConnection();
   let lockKey = null;
   try {
@@ -320,15 +350,16 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
 
     const usesBranchStock = stockMode === 'branch';
     const stockOwnerId  = usesBranchStock ? `branch-${branchId || 'global'}` : (sourceUserId || userId);
-    let   total         = 0;
+    let   subtotal      = 0;
     const invoiceNumber = `INV-${Date.now()}`;
     lockKey = buildCheckoutLockKey(stockOwnerId, branchId);
     await acquireCheckoutLock(conn, lockKey);
 
     // Step 1: Calculate total transaction value
     for (const item of items) {
-      total += Number(item.price) * Number(item.qty);
+      subtotal += Number(item.price) * Number(item.qty);
     }
+    subtotal = Number(subtotal.toFixed(2));
 
     // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     // Step 2: PRE-VALIDATION - Check all ingredients BEFORE any database changes
@@ -379,11 +410,37 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
     // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     // Step 3: INSERT TRANSACTION RECORD
     // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
+    const discount = skipDiscount
+      ? null
+      : await findBestDiscount({
+          executor: conn,
+          subtotal,
+          items,
+          voucherCode,
+          customerPhone,
+        });
+    const discountAmount = Number(discount?.discount_amount || 0);
+    const finalTotal = Number(Math.max(0, subtotal - discountAmount).toFixed(2));
+
     const [txResult] = await conn.query(`
       INSERT INTO transactions
-        (invoice_number, total_price, payment_method, created_by, source_user_id, branch_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [invoiceNumber, total, payment_method, userId, usesBranchStock ? null : stockOwnerId, branchId || null]);
+        (invoice_number, total_price, payment_method, created_by, source_user_id, branch_id,
+         discount_rate, discount_amount, discount_label, discount_program_id, voucher_code, customer_phone)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      invoiceNumber,
+      finalTotal,
+      payment_method,
+      userId,
+      usesBranchStock ? null : stockOwnerId,
+      branchId || null,
+      discount?.discount_rate || 0,
+      discountAmount,
+      discount?.discount_label || null,
+      discount?.program?.id || null,
+      discount?.voucher_code || null,
+      customerPhone || null,
+    ]);
 
     const transactionId = txResult.insertId;
 
@@ -451,8 +508,25 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       branchId: branchId || null,
       userId,
       items,
-      total,
+      subtotal,
+      finalTotal,
+      customerPhone,
+      discount,
     });
+
+    if (discount?.program?.id) {
+      await recordRedemption({
+        executor: conn,
+        program: discount.program,
+        transactionId,
+        orderId: orderLink?.order_id || null,
+        customerPhone,
+        subtotal,
+        discountAmount,
+        createdBy: userId,
+        voucherCode: discount.voucher_code,
+      });
+    }
 
     // â­• COMMIT TRANSACTION - all operations succeed atomically
     await conn.commit();
@@ -460,7 +534,13 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
     return { 
       transaction_id: transactionId, 
       invoice_number: invoiceNumber, 
-      total, 
+      subtotal,
+      total: finalTotal,
+      total_price: finalTotal,
+      discount_amount: discountAmount,
+      discount_rate: discount?.discount_rate || 0,
+      discount_label: discount?.discount_label || null,
+      voucher_code: discount?.voucher_code || null,
       kasir_name: null,
       customer_order_code: orderLink?.order_code || null,
       customer_order_id: orderLink?.order_id || null,

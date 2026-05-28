@@ -9,7 +9,7 @@ const jakartaDateExpr = (column) =>
 
 exports.create = async (req, res) => {
   try {
-    const { items, payment_method, sourceUserId, table_id } = req.body;
+    const { items, payment_method, sourceUserId, table_id, customer_phone, voucher_code } = req.body;
     if (!items || !items.length)
       return res.status(400).json({ message: 'Items tidak boleh kosong' });
 
@@ -22,6 +22,8 @@ exports.create = async (req, res) => {
       sourceUserId: sourceUserId || null,
       branchId: getRequestBranchId(req) || req.user.branch_id || null,
       tableId: table_id || null,
+      customerPhone: customer_phone || '',
+      voucherCode: voucher_code || '',
     });
 
     res.status(201).json({ 
@@ -60,6 +62,11 @@ exports.getAll = async (req, res) => {
         u_source.name AS source_user_name,
         u_source.role AS source_user_role,
         co.order_code AS customer_order_code,
+        COALESCE(co.discount_amount, t.discount_amount, 0) AS customer_discount_amount,
+        COALESCE(co.discount_rate, t.discount_rate, 0) AS customer_discount_rate,
+        COALESCE(co.discount_label, t.discount_label) AS discount_label,
+        COALESCE(co.voucher_code, t.voucher_code) AS voucher_code,
+        co.reviewed_at AS customer_reviewed_at,
         dt.table_number AS table_number
       FROM transactions t
       LEFT JOIN users u_creator ON t.created_by = u_creator.id

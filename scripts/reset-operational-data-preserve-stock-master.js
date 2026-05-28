@@ -157,6 +157,7 @@ const reset = async () => {
     const stockSnapshots = await getStockSnapshots(client);
 
     const tablesToDelete = [
+      'discount_redemptions',
       'customer_order_item_reviews',
       'customer_order_reviews',
       'customer_order_items',
@@ -217,8 +218,8 @@ const reset = async () => {
 
     await client.query('commit');
     console.log('\nReset operasional Supabase selesai.');
-    console.log('Data yang dihapus: transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, dan histori main_stock lama.');
-    console.log('Data yang dipertahankan: users/tim kasir, branches, dining_tables, products, categories, product_ingredients, website_settings, dan stock_items master.');
+    console.log('Data yang dihapus: klaim diskon, transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, dan histori main_stock lama.');
+    console.log('Data yang dipertahankan: program voucher/diskon, users/tim kasir, branches, dining_tables, products, categories, product_ingredients, website_settings, dan stock_items master.');
     console.log(`Saldo stok awal baru dibuat ulang: ${seededRows} baris main_stock.`);
   } catch (error) {
     await client.query('rollback');
