@@ -7,10 +7,282 @@ const path = require('path');
 const vm = require('vm');
 
 const connectionString = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
-const readyStockFromEnv = Number(process.env.RESET_READY_STOCK_PER_PRODUCT || 100);
-const DEFAULT_READY_STOCK_PER_BRANCH = Number.isFinite(readyStockFromEnv) && readyStockFromEnv > 0
-  ? readyStockFromEnv
-  : 100;
+const seedStockMultiplierFromEnv = Number(process.env.RESET_INGREDIENT_STOCK_MULTIPLIER || 1);
+const INGREDIENT_STOCK_MULTIPLIER = Number.isFinite(seedStockMultiplierFromEnv) && seedStockMultiplierFromEnv > 0
+  ? seedStockMultiplierFromEnv
+  : 1;
+
+const ingredient = (name, unit, minStock, pricePerUnit, seedQty) => ({
+  name,
+  unit,
+  minStock,
+  pricePerUnit,
+  seedQty,
+});
+
+const INGREDIENT_CATALOG = [
+  ingredient('Tortilla Premium', 'pcs', 50, 3500, 300),
+  ingredient('Roti Pita Homemade', 'pcs', 50, 3200, 300),
+  ingredient('Roti Pita Potong', 'pcs', 50, 2200, 300),
+  ingredient('Nasi Basmati', 'gram', 5000, 18, 50000),
+  ingredient('Nasi Bulgur', 'gram', 5000, 22, 40000),
+  ingredient('Daging Sapi Slice', 'gram', 5000, 85, 45000),
+  ingredient('Daging Domba', 'gram', 3000, 120, 25000),
+  ingredient('Ayam Marinasi', 'gram', 5000, 55, 45000),
+  ingredient('Daging Cincang Bumbu', 'gram', 4000, 78, 35000),
+  ingredient('Lamb Chop', 'pcs', 20, 45000, 120),
+  ingredient('Salmon Fillet', 'gram', 3000, 210, 18000),
+  ingredient('Sayuran Segar', 'gram', 5000, 30, 45000),
+  ingredient('Salad Segar', 'gram', 4000, 35, 35000),
+  ingredient('Tomat', 'gram', 3000, 22, 25000),
+  ingredient('Timun', 'gram', 3000, 18, 25000),
+  ingredient('Bawang Bombay', 'gram', 2000, 24, 18000),
+  ingredient('Mozzarella', 'gram', 2000, 95, 16000),
+  ingredient('Keju Feta', 'gram', 1500, 90, 12000),
+  ingredient('Yogurt Segar', 'ml', 3000, 28, 25000),
+  ingredient('Saus Tahini', 'ml', 2000, 42, 18000),
+  ingredient('Garlic Sauce', 'ml', 3000, 32, 24000),
+  ingredient('Saus Pedas Sultan', 'ml', 2000, 30, 18000),
+  ingredient('Butter Sauce', 'gram', 2000, 55, 16000),
+  ingredient('Rempah Timur Tengah', 'gram', 1000, 110, 9000),
+  ingredient('Minyak Zaitun', 'ml', 2000, 48, 18000),
+  ingredient('Kacang Arab', 'gram', 3000, 38, 25000),
+  ingredient('Daun Anggur', 'pcs', 50, 850, 500),
+  ingredient('Kulit Pastry', 'pcs', 40, 1800, 300),
+  ingredient('Kulit Samosa', 'pcs', 40, 1500, 400),
+  ingredient('Kulit Lahmacun', 'pcs', 40, 2400, 250),
+  ingredient('Cup Minuman', 'pcs', 50, 1200, 350),
+  ingredient('Ayran Base', 'ml', 3000, 24, 24000),
+  ingredient('Teh Turki', 'ml', 3000, 8, 35000),
+  ingredient('Lemon Mint Syrup', 'ml', 2000, 35, 18000),
+  ingredient('Jus Delima', 'ml', 2000, 55, 16000),
+  ingredient('Kopi Arabica', 'gram', 1000, 145, 8000),
+  ingredient('Rose Syrup', 'ml', 1500, 40, 14000),
+  ingredient('Air Soda', 'ml', 3000, 9, 30000),
+  ingredient('Phyllo Pastry', 'pcs', 40, 1700, 300),
+  ingredient('Pistachio', 'gram', 800, 190, 7000),
+  ingredient('Madu', 'ml', 1000, 75, 8000),
+  ingredient('Keju Kunafa', 'gram', 1500, 110, 12000),
+  ingredient('Adonan Kunafa', 'gram', 1500, 65, 12000),
+  ingredient('Susu Pudding', 'ml', 2000, 24, 20000),
+  ingredient('Dondurma Scoop', 'scoop', 30, 6500, 250),
+];
+
+const RECIPE_BY_PRODUCT = {
+  'Sultan Royal Kebab': [
+    ['Roti Pita Homemade', 1],
+    ['Daging Sapi Slice', 95],
+    ['Daging Domba', 45],
+    ['Saus Tahini', 35],
+    ['Salad Segar', 55],
+    ['Rempah Timur Tengah', 6],
+  ],
+  'Shawarma Bombastic': [
+    ['Tortilla Premium', 1],
+    ['Ayam Marinasi', 130],
+    ['Garlic Sauce', 35],
+    ['Sayuran Segar', 60],
+    ['Rempah Timur Tengah', 5],
+  ],
+  'Doner Kebab Original': [
+    ['Roti Pita Homemade', 1],
+    ['Daging Sapi Slice', 120],
+    ['Saus Pedas Sultan', 30],
+    ['Tomat', 35],
+    ['Timun', 30],
+    ['Bawang Bombay', 20],
+  ],
+  'Kebab Cheese Lava': [
+    ['Tortilla Premium', 1],
+    ['Daging Sapi Slice', 115],
+    ['Mozzarella', 65],
+    ['Garlic Sauce', 25],
+    ['Sayuran Segar', 45],
+  ],
+  'Adana Kebab Platter': [
+    ['Daging Cincang Bumbu', 160],
+    ['Nasi Bulgur', 180],
+    ['Salad Segar', 55],
+    ['Saus Pedas Sultan', 25],
+    ['Rempah Timur Tengah', 8],
+  ],
+  'Iskender Kebab': [
+    ['Roti Pita Potong', 2],
+    ['Daging Sapi Slice', 140],
+    ['Butter Sauce', 45],
+    ['Yogurt Segar', 60],
+    ['Tomat', 40],
+  ],
+  'Lamb Chops Sultan': [
+    ['Lamb Chop', 2],
+    ['Nasi Basmati', 180],
+    ['Salad Segar', 60],
+    ['Rempah Timur Tengah', 8],
+    ['Minyak Zaitun', 25],
+  ],
+  'Mixed Grill Platter': [
+    ['Daging Sapi Slice', 130],
+    ['Daging Domba', 100],
+    ['Ayam Marinasi', 120],
+    ['Nasi Basmati', 180],
+    ['Salad Segar', 70],
+    ['Garlic Sauce', 35],
+  ],
+  'Nasi Kabsa Royal': [
+    ['Nasi Basmati', 230],
+    ['Ayam Marinasi', 160],
+    ['Rempah Timur Tengah', 10],
+    ['Bawang Bombay', 35],
+    ['Minyak Zaitun', 20],
+  ],
+  'Moroccan Beef Tagine': [
+    ['Daging Sapi Slice', 170],
+    ['Nasi Basmati', 160],
+    ['Rempah Timur Tengah', 10],
+    ['Tomat', 55],
+    ['Minyak Zaitun', 25],
+  ],
+  'Grilled Salmon Sultan': [
+    ['Salmon Fillet', 180],
+    ['Salad Segar', 70],
+    ['Lemon Mint Syrup', 20],
+    ['Minyak Zaitun', 25],
+    ['Rempah Timur Tengah', 5],
+  ],
+  'Chicken Mansaf Jordania': [
+    ['Ayam Marinasi', 180],
+    ['Nasi Basmati', 210],
+    ['Yogurt Segar', 80],
+    ['Rempah Timur Tengah', 9],
+    ['Kacang Arab', 40],
+  ],
+  'Falafel Crispy': [
+    ['Kacang Arab', 140],
+    ['Garlic Sauce', 25],
+    ['Salad Segar', 45],
+    ['Rempah Timur Tengah', 6],
+  ],
+  'Hummus & Pita Premium': [
+    ['Kacang Arab', 120],
+    ['Roti Pita Homemade', 1],
+    ['Saus Tahini', 35],
+    ['Minyak Zaitun', 20],
+  ],
+  'Börek Keju Turki': [
+    ['Kulit Pastry', 2],
+    ['Keju Feta', 60],
+    ['Mozzarella', 35],
+    ['Butter Sauce', 20],
+  ],
+  'Dolma (Stuffed Leaves)': [
+    ['Daun Anggur', 6],
+    ['Nasi Bulgur', 90],
+    ['Tomat', 35],
+    ['Minyak Zaitun', 18],
+    ['Rempah Timur Tengah', 5],
+  ],
+  'Lahmacun Sultan': [
+    ['Kulit Lahmacun', 1],
+    ['Daging Cincang Bumbu', 100],
+    ['Tomat', 35],
+    ['Bawang Bombay', 25],
+    ['Rempah Timur Tengah', 5],
+  ],
+  'Samosa Daging Spesial': [
+    ['Kulit Samosa', 3],
+    ['Daging Cincang Bumbu', 75],
+    ['Bawang Bombay', 20],
+    ['Saus Pedas Sultan', 20],
+  ],
+  'Ayran Sultan': [
+    ['Cup Minuman', 1],
+    ['Ayran Base', 250],
+    ['Yogurt Segar', 45],
+  ],
+  'Turkish Çay (Tea)': [
+    ['Cup Minuman', 1],
+    ['Teh Turki', 280],
+  ],
+  'Lemon Mint Sultan': [
+    ['Cup Minuman', 1],
+    ['Lemon Mint Syrup', 70],
+    ['Air Soda', 220],
+  ],
+  'Jus Delima Segar': [
+    ['Cup Minuman', 1],
+    ['Jus Delima', 280],
+  ],
+  'Arabic Qahwa Coffee': [
+    ['Cup Minuman', 1],
+    ['Kopi Arabica', 22],
+    ['Rempah Timur Tengah', 2],
+  ],
+  'Rose Water Lemonade': [
+    ['Cup Minuman', 1],
+    ['Rose Syrup', 65],
+    ['Lemon Mint Syrup', 35],
+    ['Air Soda', 220],
+  ],
+  'Baklava Sultan': [
+    ['Phyllo Pastry', 3],
+    ['Pistachio', 45],
+    ['Madu', 35],
+    ['Butter Sauce', 25],
+  ],
+  'Kunafa Cheese': [
+    ['Adonan Kunafa', 120],
+    ['Keju Kunafa', 70],
+    ['Madu', 30],
+    ['Pistachio', 18],
+  ],
+  'Muhallebi Pudding': [
+    ['Susu Pudding', 260],
+    ['Madu', 20],
+    ['Pistachio', 12],
+  ],
+  'Dondurma Ice Cream': [
+    ['Dondurma Scoop', 2],
+    ['Pistachio', 15],
+    ['Madu', 15],
+  ],
+  'Paket Berdua Romantis': [
+    ['Tortilla Premium', 2],
+    ['Daging Sapi Slice', 220],
+    ['Ayam Marinasi', 180],
+    ['Salad Segar', 120],
+    ['Garlic Sauce', 70],
+    ['Cup Minuman', 2],
+    ['Lemon Mint Syrup', 100],
+    ['Air Soda', 420],
+  ],
+  'Paket Keluarga Sultan': [
+    ['Roti Pita Homemade', 4],
+    ['Daging Sapi Slice', 360],
+    ['Daging Domba', 220],
+    ['Ayam Marinasi', 320],
+    ['Nasi Basmati', 520],
+    ['Salad Segar', 220],
+    ['Garlic Sauce', 120],
+    ['Saus Tahini', 90],
+  ],
+  'Paket Catering Event': [
+    ['Tortilla Premium', 1],
+    ['Daging Sapi Slice', 90],
+    ['Ayam Marinasi', 90],
+    ['Nasi Basmati', 150],
+    ['Salad Segar', 60],
+    ['Garlic Sauce', 35],
+  ],
+  'Paket Corporate Lunch': [
+    ['Roti Pita Homemade', 1],
+    ['Ayam Marinasi', 140],
+    ['Nasi Basmati', 160],
+    ['Salad Segar', 55],
+    ['Garlic Sauce', 30],
+    ['Cup Minuman', 1],
+    ['Teh Turki', 240],
+  ],
+};
 
 if (!connectionString) {
   console.error('SUPABASE_DATABASE_URL atau DATABASE_URL wajib diisi.');
@@ -187,29 +459,84 @@ const ensureProduct = async (client, item, categoryId) => {
   return inserted.rows[0].id;
 };
 
-const ensureReadyStockItem = async (client, item) => {
-  const stockName = `Ready Stock - ${item.name}`;
-  const costPerUnit = Math.max(1, Math.round(Number(item.price || 0) * 0.45));
-  const { rows } = await client.query('select id from stock_items where name = $1 limit 1', [stockName]);
+const ensureStockItem = async (client, item) => {
+  const { rows } = await client.query('select id from stock_items where name = $1 limit 1', [item.name]);
   if (rows.length) {
     await client.query(`
       update stock_items
-      set unit = 'porsi',
-          min_stock = 10,
-          price_per_unit = $1,
+      set unit = $1,
+          min_stock = $2,
+          price_per_unit = $3,
           stock = 0,
           total_price = 0
-      where id = $2
-    `, [costPerUnit, rows[0].id]);
-    return { id: rows[0].id, costPerUnit };
+      where id = $4
+    `, [item.unit, item.minStock, item.pricePerUnit, rows[0].id]);
+    return rows[0].id;
   }
 
   const inserted = await client.query(`
     insert into stock_items (name, unit, stock, total_price, price_per_unit, min_stock)
-    values ($1, 'porsi', 0, 0, $2, 10)
+    values ($1, $2, 0, 0, $3, $4)
     returning id
-  `, [stockName, costPerUnit]);
-  return { id: inserted.rows[0].id, costPerUnit };
+  `, [item.name, item.unit, item.pricePerUnit, item.minStock]);
+  return inserted.rows[0].id;
+};
+
+const seedIngredientStock = async ({ client, actorId, branchIds }) => {
+  const stockItems = new Map();
+  let stockRows = 0;
+
+  for (const item of INGREDIENT_CATALOG) {
+    const stockItemId = await ensureStockItem(client, item);
+    const qtyPerBranch = Number(item.seedQty || 0) * INGREDIENT_STOCK_MULTIPLIER;
+    const totalQty = qtyPerBranch * branchIds.length;
+    const totalValue = totalQty * Number(item.pricePerUnit || 0);
+
+    for (const branchId of branchIds) {
+      await client.query(`
+        insert into main_stock
+          (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
+        values ($1, $2, $3, 'in', 'adjustment', $4, $5, $6)
+      `, [
+        stockItemId,
+        qtyPerBranch,
+        item.pricePerUnit,
+        'Saldo awal bahan baku dari menu landing page setelah reset operasional',
+        branchId,
+        actorId,
+      ]);
+      stockRows += 1;
+    }
+
+    await client.query(`
+      update stock_items
+      set stock = $1,
+          total_price = $2,
+          price_per_unit = $3,
+          min_stock = $4
+      where id = $5
+    `, [totalQty, totalValue, item.pricePerUnit, item.minStock, stockItemId]);
+
+    stockItems.set(item.name, stockItemId);
+  }
+
+  return { stockItems, stockRows };
+};
+
+const getProductRecipe = (productName, categoryName) => {
+  const recipe = RECIPE_BY_PRODUCT[productName];
+  if (recipe) return recipe;
+
+  if (String(categoryName).includes('Minuman')) {
+    return [['Cup Minuman', 1], ['Teh Turki', 250]];
+  }
+  if (String(categoryName).includes('Dessert')) {
+    return [['Susu Pudding', 180], ['Madu', 20], ['Pistachio', 10]];
+  }
+  if (String(categoryName).includes('Snack')) {
+    return [['Roti Pita Homemade', 1], ['Kacang Arab', 80], ['Garlic Sauce', 20], ['Salad Segar', 35]];
+  }
+  return [['Tortilla Premium', 1], ['Daging Sapi Slice', 100], ['Sayuran Segar', 50], ['Garlic Sauce', 25]];
 };
 
 const seedLandingMenuProductsAndStock = async ({ client, actorId, fallbackBranchId }) => {
@@ -218,12 +545,19 @@ const seedLandingMenuProductsAndStock = async ({ client, actorId, fallbackBranch
   const branchIds = activeBranches.length ? activeBranches.map((row) => row.id) : [fallbackBranchId].filter(Boolean);
   if (!branchIds.length) throw new Error('Tidak ada cabang aktif untuk seed stok produk.');
 
+  const landingProductNames = landingMenu.flatMap((category) => category.items.map((item) => item.name));
+  const landingCategoryNames = landingMenu.map((category) => category.name);
+
   await client.query('delete from product_ingredients');
-  await client.query('update stock_items set stock = 0, total_price = 0');
+  await client.query('delete from products where not (name = any($1::text[]))', [landingProductNames]);
+  await client.query('delete from categories where not (name = any($1::text[])) and not exists (select 1 from products where products.category_id = categories.id)', [landingCategoryNames]);
+  await client.query('delete from stock_items');
+
+  const stockSeed = await seedIngredientStock({ client, actorId, branchIds });
 
   let productCount = 0;
   let categoryCount = 0;
-  let stockRows = 0;
+  let recipeRows = 0;
 
   for (const category of landingMenu) {
     const categoryId = await ensureCategory(client, category.name);
@@ -231,49 +565,31 @@ const seedLandingMenuProductsAndStock = async ({ client, actorId, fallbackBranch
 
     for (const item of category.items) {
       const productId = await ensureProduct(client, item, categoryId);
-      const stockItem = await ensureReadyStockItem(client, item);
+      const recipe = getProductRecipe(item.name, category.name);
 
-      await client.query(`
-        insert into product_ingredients (product_id, stock_item_id, qty)
-        values ($1, $2, 1)
-        on conflict (product_id, stock_item_id)
-        do update set qty = excluded.qty
-      `, [productId, stockItem.id]);
-
-      let totalQty = 0;
-      let totalValue = 0;
-      for (const branchId of branchIds) {
-        const qty = DEFAULT_READY_STOCK_PER_BRANCH;
-        const totalCost = qty * stockItem.costPerUnit;
-        totalQty += qty;
-        totalValue += totalCost;
-        stockRows += 1;
+      for (const [stockName, qty] of recipe) {
+        const stockItemId = stockSeed.stockItems.get(stockName);
+        if (!stockItemId) throw new Error(`Bahan baku "${stockName}" belum tersedia di katalog seed.`);
         await client.query(`
-          insert into main_stock
-            (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
-          values ($1, $2, $3, 'in', 'adjustment', $4, $5, $6)
-        `, [
-          stockItem.id,
-          qty,
-          stockItem.costPerUnit,
-          'Saldo awal ready stock dari menu landing page setelah reset operasional',
-          branchId,
-          actorId,
-        ]);
+          insert into product_ingredients (product_id, stock_item_id, qty)
+          values ($1, $2, $3)
+          on conflict (product_id, stock_item_id)
+          do update set qty = excluded.qty
+        `, [productId, stockItemId, qty]);
+        recipeRows += 1;
       }
-
-      await client.query(`
-        update stock_items
-        set stock = $1,
-            total_price = $2
-        where id = $3
-      `, [totalQty, totalValue, stockItem.id]);
 
       productCount += 1;
     }
   }
 
-  return { categoryCount, productCount, stockRows };
+  return {
+    categoryCount,
+    productCount,
+    ingredientCount: INGREDIENT_CATALOG.length,
+    recipeRows,
+    stockRows: stockSeed.stockRows,
+  };
 };
 
 const reset = async () => {
@@ -320,9 +636,9 @@ const reset = async () => {
 
     await client.query('commit');
     console.log('\nReset operasional Supabase selesai.');
-    console.log('Data yang dihapus: klaim diskon, transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, histori main_stock lama, dan resep produk lama.');
-    console.log('Data yang dipertahankan: program voucher/diskon, users/tim kasir, branches, dining_tables, website_settings, serta master category/product/stock item yang di-upsert agar seed ulang tidak hilang.');
-    console.log(`Seed menu landing page: ${seedResult.categoryCount} kategori, ${seedResult.productCount} produk, ${seedResult.stockRows} saldo stok cabang.`);
+    console.log('Data yang dihapus: klaim diskon, transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, histori main_stock lama, resep produk lama, stock item lama, dan produk non-landing.');
+    console.log('Data yang dipertahankan: program voucher/diskon, users/tim kasir, branches, dining_tables, website_settings, serta kategori/produk landing yang di-upsert agar seed ulang stabil.');
+    console.log(`Seed menu landing page: ${seedResult.categoryCount} kategori, ${seedResult.productCount} produk, ${seedResult.ingredientCount} bahan baku, ${seedResult.recipeRows} baris resep, ${seedResult.stockRows} saldo stok cabang.`);
   } catch (error) {
     await client.query('rollback');
     console.error('Reset operasional gagal:', error.message);
