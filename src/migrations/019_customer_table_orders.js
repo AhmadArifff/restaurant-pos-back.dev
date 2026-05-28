@@ -37,14 +37,28 @@ exports.up = async (db) => {
       accepted_at TIMESTAMP NULL,
       completed_by INT NULL,
       completed_at TIMESTAMP NULL,
+      cancel_reason TEXT NULL,
+      cancelled_by INT NULL,
+      cancelled_at TIMESTAMP NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       FOREIGN KEY (table_id) REFERENCES dining_tables(id),
       FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL,
       FOREIGN KEY (accepted_by) REFERENCES users(id) ON DELETE SET NULL,
-      FOREIGN KEY (completed_by) REFERENCES users(id) ON DELETE SET NULL
+      FOREIGN KEY (completed_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (cancelled_by) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
+
+  for (const column of [
+    'ADD COLUMN cancel_reason TEXT NULL',
+    'ADD COLUMN cancelled_by INT NULL',
+    'ADD COLUMN cancelled_at TIMESTAMP NULL',
+  ]) {
+    try {
+      await db.query(`ALTER TABLE customer_orders ${column}`);
+    } catch (_) {}
+  }
 
   await db.query(`
     CREATE TABLE IF NOT EXISTS customer_order_items (

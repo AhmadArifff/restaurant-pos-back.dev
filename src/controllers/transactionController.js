@@ -9,7 +9,7 @@ const jakartaDateExpr = (column) =>
 
 exports.create = async (req, res) => {
   try {
-    const { items, payment_method, sourceUserId } = req.body;
+    const { items, payment_method, sourceUserId, table_id } = req.body;
     if (!items || !items.length)
       return res.status(400).json({ message: 'Items tidak boleh kosong' });
 
@@ -21,6 +21,7 @@ exports.create = async (req, res) => {
       userId: req.user.id,
       sourceUserId: sourceUserId || null,
       branchId: getRequestBranchId(req) || req.user.branch_id || null,
+      tableId: table_id || null,
     });
 
     res.status(201).json({ 
@@ -57,10 +58,14 @@ exports.getAll = async (req, res) => {
         u_creator.role AS creator_role,
         u_source.id AS source_user_id,
         u_source.name AS source_user_name,
-        u_source.role AS source_user_role
+        u_source.role AS source_user_role,
+        co.order_code AS customer_order_code,
+        dt.table_number AS table_number
       FROM transactions t
       LEFT JOIN users u_creator ON t.created_by = u_creator.id
       LEFT JOIN users u_source ON t.source_user_id = u_source.id
+      LEFT JOIN customer_orders co ON co.transaction_id = t.id
+      LEFT JOIN dining_tables dt ON dt.id = co.table_id
       WHERE 1=1
     `;
     const params = [];
@@ -118,5 +123,82 @@ exports.getById = async (req, res) => {
     res.json({ ...tx[0], items });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.delete = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const params = [req.params.id];
+    let where = 'WHERE id = ?';
+    if (branchId) {
+      where += ' AND branch_id = ?';
+      params.push(branchId);
+    }
+
+    const [rows] = await conn.query(`SELECT * FROM transactions ${where} LIMIT 1`, params);
+    const transaction = rows[0];
+    if (!transaction) {
+      await conn.rollback();
+      return res.status(404).json({ message: 'Transaksi tidak ditemukan di cabang aktif' });
+    }
+
+    const canVoid = req.user.role === 'admin'
+      || Number(transaction.created_by) === Number(req.user.id)
+      || Number(transaction.source_user_id) === Number(req.user.id);
+    if (!canVoid) {
+      await conn.rollback();
+      return res.status(403).json({ message: 'Anda tidak memiliki akses untuk menghapus transaksi ini' });
+    }
+
+    const [stockRows] = await conn.query(`
+      SELECT stock_item_id, COALESCE(SUM(qty), 0) AS qty_return
+      FROM main_stock
+      WHERE source = 'transaction'
+        AND reference_id = ?
+        AND type = 'out'
+      GROUP BY stock_item_id
+    `, [transaction.id]);
+
+    for (const row of stockRows) {
+      await conn.query(
+        'UPDATE stock_items SET stock = stock + ? WHERE id = ?',
+        [Number(row.qty_return || 0), row.stock_item_id]
+      );
+    }
+
+    await conn.query(
+      "DELETE FROM main_stock WHERE source = 'transaction' AND reference_id = ?",
+      [transaction.id]
+    );
+
+    const reason = String(req.body?.reason || '').trim()
+      || `Transaksi ${transaction.invoice_number} dihapus/void oleh ${req.user.name || req.user.role}`;
+    await conn.query(`
+      UPDATE customer_orders
+      SET status = 'cancelled',
+          cancel_reason = ?,
+          cancelled_by = ?,
+          cancelled_at = NOW(),
+          transaction_id = NULL
+      WHERE transaction_id = ?
+    `, [reason, req.user.id, transaction.id]);
+
+    await conn.query('DELETE FROM transactions WHERE id = ?', [transaction.id]);
+    await conn.commit();
+
+    res.json({
+      message: 'Transaksi berhasil dihapus dan stok sudah dikembalikan',
+      restored_items: stockRows.length,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('Transaction delete error:', err.message);
+    res.status(err.status_code || 500).json({ message: err.message });
+  } finally {
+    conn.release();
   }
 };

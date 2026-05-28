@@ -1,4 +1,4 @@
-// const db = require('../config/db');
+﻿// const db = require('../config/db');
 
 // exports.createTransaction = async ({ items, payment_method, userId }) => {
 //   const conn = await db.getConnection();
@@ -72,7 +72,7 @@
 //     conn.release();
 //   }
 // };
-// Di services/transactionService.js — tambah pengurangan stok kasir
+// Di services/transactionService.js â€” tambah pengurangan stok kasir
 
 
 // const db = require('../config/db');
@@ -179,6 +179,7 @@
 // 1. Insert ke main_stock setelah transaksi (source='transaction')
 // 2. Update stock_items.stock setelah transaksi
 // ============================================================
+const crypto = require('crypto');
 const db = require('../config/db');
 const { getUserIngredientBalance } = require('./stockAllocationService');
 
@@ -206,23 +207,97 @@ const releaseCheckoutLock = async (conn, lockKey) => {
   } catch (_) {}
 };
 
-// ══════════════════════════════════════════════════════════════════════════
-// 🔄 ATOMIC TRANSACTION WITH FULL VALIDATION & ERROR HANDLING
-// ══════════════════════════════════════════════════════════════════════════
+const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+
+const createPosCustomerOrder = async ({ conn, transactionId, invoiceNumber, tableId, branchId, userId, items, total }) => {
+  if (!tableId) return null;
+
+  const [tables] = await conn.query(
+    "SELECT * FROM dining_tables WHERE id = ? AND status = 'active' LIMIT 1",
+    [tableId]
+  );
+  if (!tables.length) {
+    const err = new Error('Meja tidak ditemukan atau sedang tidak aktif');
+    err.status_code = 400;
+    throw err;
+  }
+
+  const table = tables[0];
+  if (branchId && table.branch_id && Number(table.branch_id) !== Number(branchId)) {
+    const err = new Error('Meja tidak sesuai dengan cabang aktif');
+    err.status_code = 400;
+    throw err;
+  }
+
+  const [activeOrders] = await conn.query(`
+    SELECT id, order_code
+    FROM customer_orders
+    WHERE table_id = ?
+      AND status NOT IN ('completed', 'cancelled')
+    LIMIT 1
+  `, [tableId]);
+  if (activeOrders.length) {
+    const err = new Error(`Meja ${table.table_number} masih memiliki pesanan aktif (${activeOrders[0].order_code})`);
+    err.status_code = 409;
+    throw err;
+  }
+
+  const orderCode = makeOrderCode();
+  const [orderResult] = await conn.query(`
+    INSERT INTO customer_orders
+      (order_code, table_id, branch_id, customer_name, subtotal, final_total, status,
+       payment_status, transaction_id, note, accepted_by, accepted_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'accepted', 'paid', ?, ?, ?, NOW())
+  `, [
+    orderCode,
+    tableId,
+    branchId || table.branch_id || null,
+    'Pelanggan POS',
+    total,
+    total,
+    transactionId,
+    `Pesanan dibuat dari POS - ${invoiceNumber}`,
+    userId,
+  ]);
+
+  const orderId = orderResult.insertId;
+  for (const item of items) {
+    const [products] = await conn.query(
+      'SELECT id, name, price FROM products WHERE id = ? LIMIT 1',
+      [item.product_id]
+    );
+    const product = products[0];
+    if (!product) continue;
+    const qty = Number(item.qty || 0);
+    const price = Number(item.price ?? product.price ?? 0);
+
+    await conn.query(`
+      INSERT INTO customer_order_items
+        (order_id, product_id, product_name, price, qty, subtotal, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [orderId, product.id, product.name, price, qty, Number(price * qty), 'Dibuat dari transaksi POS']);
+  }
+
+  return { order_id: orderId, order_code: orderCode, table_number: table.table_number };
+};
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ðŸ”„ ATOMIC TRANSACTION WITH FULL VALIDATION & ERROR HANDLING
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // Purpose: Ensure stock deductions and transaction records are always in sync
 // Features:
-//   ✓ Single database transaction wraps entire operation (BEGIN...COMMIT/ROLLBACK)
-//   ✓ Pre-validation: Check ALL ingredients have sufficient stock BEFORE processing
-//   ✓ Negative balance prevention: Reject if would cause negative balance
-//   ✓ Audit trail: Records all movements to main_stock with immutable reference
-//   ✓ Fallback safety: GREATEST(0, ...) prevents DB negative but rejects at API level
-// ══════════════════════════════════════════════════════════════════════════
+//   âœ“ Single database transaction wraps entire operation (BEGIN...COMMIT/ROLLBACK)
+//   âœ“ Pre-validation: Check ALL ingredients have sufficient stock BEFORE processing
+//   âœ“ Negative balance prevention: Reject if would cause negative balance
+//   âœ“ Audit trail: Records all movements to main_stock with immutable reference
+//   âœ“ Fallback safety: GREATEST(0, ...) prevents DB negative but rejects at API level
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId }) => {
+exports.createTransaction = async ({ items, payment_method, userId, sourceUserId, branchId, tableId }) => {
   const conn = await db.getConnection();
   let lockKey = null;
   try {
-    // ⭕ BEGIN TRANSACTION - all operations below are atomic
+    // â­• BEGIN TRANSACTION - all operations below are atomic
     await conn.beginTransaction();
 
     const stockOwnerId  = sourceUserId || userId;
@@ -236,9 +311,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       total += Number(item.price) * Number(item.qty);
     }
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     // Step 2: PRE-VALIDATION - Check all ingredients BEFORE any database changes
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     const validationErrors = [];
 
     for (const item of items) {
@@ -263,7 +338,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
           branchId
         );
         
-        // ❌ VALIDATION: Check if sufficient stock available
+        // âŒ VALIDATION: Check if sufficient stock available
         if (remainingApproved < neededQty) {
           validationErrors.push({
             item_name: ing.ing_name,
@@ -271,18 +346,6 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
             needed: neededQty,
             available: Math.max(0, remainingApproved),
             error_code: 'INSUFFICIENT_STOCK'
-          });
-        }
-
-        // ⚠️ WARNING CHECK: Warn if stock would go negative (but still allow if > 0)
-        const currentBalance = remainingApproved - neededQty;
-        if (currentBalance < 0) {
-          validationErrors.push({
-            item_name: ing.ing_name,
-            unit: ing.unit,
-            current_balance: remainingApproved,
-            would_be: currentBalance,
-            error_code: 'WOULD_GO_NEGATIVE'
           });
         }
       }
@@ -297,9 +360,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       throw err;
     }
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     // Step 3: INSERT TRANSACTION RECORD
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     const [txResult] = await conn.query(`
       INSERT INTO transactions
         (invoice_number, total_price, payment_method, created_by, source_user_id, branch_id)
@@ -308,9 +371,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
 
     const transactionId = txResult.insertId;
 
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     // Step 4: PROCESS EACH ITEM - Insert transaction items + deduct stock
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
     for (const item of items) {
       const subtotal = Number(item.price) * Number(item.qty);
 
@@ -338,7 +401,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
         const qtyOut      = Number(ing.qty_per_unit) * Number(item.qty);
         const costPerUnit = Number(ing.price_per_unit) || 0;
 
-        // 📝 Insert audit trail to main_stock (IMMUTABLE RECORD)
+        // ðŸ“ Insert audit trail to main_stock (IMMUTABLE RECORD)
         // This is the "single source of truth" for stock calculations
         await conn.query(`
           INSERT INTO main_stock
@@ -354,7 +417,7 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
           userId,
         ]);
 
-        // 💾 Update stock_items.stock as a convenience field (for quick lookups)
+        // ðŸ’¾ Update stock_items.stock as a convenience field (for quick lookups)
         // Note: Not used in balance calculations, but maintained for UI performance
         await conn.query(`
           UPDATE stock_items
@@ -364,18 +427,32 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
       }
     }
 
-    // ⭕ COMMIT TRANSACTION - all operations succeed atomically
+    const orderLink = await createPosCustomerOrder({
+      conn,
+      transactionId,
+      invoiceNumber,
+      tableId: tableId || null,
+      branchId: branchId || null,
+      userId,
+      items,
+      total,
+    });
+
+    // â­• COMMIT TRANSACTION - all operations succeed atomically
     await conn.commit();
 
     return { 
       transaction_id: transactionId, 
       invoice_number: invoiceNumber, 
       total, 
-      kasir_name: null 
+      kasir_name: null,
+      customer_order_code: orderLink?.order_code || null,
+      customer_order_id: orderLink?.order_id || null,
+      table_number: orderLink?.table_number || null,
     };
 
   } catch (err) {
-    // 🔙 ROLLBACK on any error - ensures no partial updates
+    // ðŸ”™ ROLLBACK on any error - ensures no partial updates
     await conn.rollback();
     throw err;
 
@@ -386,9 +463,9 @@ exports.createTransaction = async ({ items, payment_method, userId, sourceUserId
 };
 
 
-// ──────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // CONTROLLER: Handle transaction creation from HTTP request
-// ──────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 exports.create = async (req, res) => {
   try {
     const { items, payment_method, source_user_id, branch_id } = req.body;
@@ -433,3 +510,4 @@ exports.create = async (req, res) => {
     });
   }
 };
+

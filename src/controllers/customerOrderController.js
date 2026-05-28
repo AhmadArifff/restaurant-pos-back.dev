@@ -5,6 +5,12 @@ const { getRequestBranchId } = require('../utils/branchContext');
 
 const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
 const STAFF_ORDER_STATUSES = ['accepted', 'preparing', 'ready', 'completed', 'cancelled'];
+const NEXT_STATUS_BY_CURRENT = {
+  pending: 'accepted',
+  accepted: 'preparing',
+  preparing: 'ready',
+  ready: 'completed',
+};
 const REVIEW_DISCOUNT_RATE = 5;
 
 const makeToken = () => crypto.randomBytes(24).toString('hex');
@@ -171,26 +177,47 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 
   const err = new Error('Stok semua kasir belum cukup untuk menerima pesanan ini');
   err.status_code = 400;
-  err.validation_errors = lastError?.validation_errors || [];
+  const uniqueErrors = new Map();
+  (lastError?.validation_errors || []).forEach((item) => {
+    if (!item?.item_name) return;
+    const available = Number(item.available ?? item.current_balance ?? 0);
+    const needed = Number(item.needed ?? 0);
+    uniqueErrors.set(item.item_name, {
+      item_name: item.item_name,
+      unit: item.unit || '',
+      available: Math.max(0, available),
+      needed,
+      error_code: 'INSUFFICIENT_STOCK',
+    });
+  });
+  err.validation_errors = [...uniqueErrors.values()];
   throw err;
 };
 
 exports.listPublicTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req);
-    const branchWhere = branchId ? 'AND branch_id = ?' : '';
+    const branchWhere = branchId ? 'AND dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
     const orderBy = db.isPostgres
       ? 'table_number ASC'
       : 'CAST(table_number AS UNSIGNED), table_number';
     const [rows] = await db.query(`
-      SELECT id, table_number, table_name, capacity, qr_token, status, branch_id
-      FROM dining_tables
-      WHERE status = 'active'
+      SELECT dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id,
+        COUNT(co.id) AS active_orders
+      FROM dining_tables dt
+      LEFT JOIN customer_orders co ON co.table_id = dt.id
+        AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
+      WHERE dt.status = 'active'
         ${branchWhere}
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id
       ORDER BY ${orderBy}
     `, params);
-    res.json(rows);
+    res.json(rows.map((row) => ({
+      ...row,
+      active_orders: Number(row.active_orders || 0),
+      is_available: Number(row.active_orders || 0) === 0,
+    })));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -199,14 +226,22 @@ exports.listPublicTables = async (req, res) => {
 exports.getPublicTableByToken = async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT id, table_number, table_name, capacity, qr_token, status, branch_id
-      FROM dining_tables
-      WHERE qr_token = ? AND status = 'active'
+      SELECT dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id,
+        COUNT(co.id) AS active_orders
+      FROM dining_tables dt
+      LEFT JOIN customer_orders co ON co.table_id = dt.id
+        AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
+      WHERE dt.qr_token = ? AND dt.status = 'active'
+      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id
       LIMIT 1
     `, [req.params.token]);
 
     if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      active_orders: Number(rows[0].active_orders || 0),
+      is_available: Number(rows[0].active_orders || 0) === 0,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -238,6 +273,19 @@ exports.createOrder = async (req, res) => {
     if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau tidak aktif' });
 
     await conn.beginTransaction();
+
+    const [activeOrders] = await conn.query(`
+      SELECT id, order_code
+      FROM customer_orders
+      WHERE table_id = ?
+        AND status IN ('pending', 'accepted', 'preparing', 'ready')
+      LIMIT 1
+    `, [tables[0].id]);
+    if (activeOrders.length) {
+      const err = new Error(`Meja ini masih memiliki pesanan aktif (${activeOrders[0].order_code}). Silakan pantau status atau hubungi kasir.`);
+      err.status_code = 409;
+      throw err;
+    }
 
     const orderItems = [];
     let subtotal = 0;
@@ -540,11 +588,13 @@ exports.listOrders = async (req, res) => {
     const [orders] = await db.query(`
       SELECT co.*, dt.table_number, dt.table_name,
         u1.name AS accepted_by_name,
-        u2.name AS completed_by_name
+        u2.name AS completed_by_name,
+        u3.name AS cancelled_by_name
       FROM customer_orders co
       JOIN dining_tables dt ON dt.id = co.table_id
       LEFT JOIN users u1 ON u1.id = co.accepted_by
       LEFT JOIN users u2 ON u2.id = co.completed_by
+      LEFT JOIN users u3 ON u3.id = co.cancelled_by
       ${where}
       ORDER BY co.created_at DESC
       LIMIT ?
@@ -571,9 +621,22 @@ exports.updateOrderStatus = async (req, res) => {
     const order = await getOrderRowById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
+    if (order.status === 'completed') return res.status(400).json({ message: 'Pesanan sudah selesai' });
+
+    const isCancelling = nextStatus === 'cancelled';
+    if (isCancelling && !String(req.body.cancel_reason || '').trim()) {
+      return res.status(400).json({ message: 'Alasan pembatalan wajib diisi' });
+    }
+
+    const expectedNextStatus = NEXT_STATUS_BY_CURRENT[order.status];
+    if (!isCancelling && nextStatus !== expectedNextStatus) {
+      return res.status(400).json({
+        message: `Status harus berurutan. Dari ${order.status} hanya bisa lanjut ke ${expectedNextStatus || 'status berikutnya'}.`,
+      });
+    }
 
     let transactionResult = null;
-    const shouldFulfill = ['accepted', 'preparing', 'ready', 'completed'].includes(nextStatus);
+    const shouldFulfill = nextStatus === 'accepted';
     if (shouldFulfill && !order.transaction_id) {
       transactionResult = await resolveFulfillmentTransaction({
         order,
@@ -590,9 +653,14 @@ exports.updateOrderStatus = async (req, res) => {
       params.push(transactionResult.transaction_id);
     }
 
-    if (nextStatus === 'accepted' || (shouldFulfill && !order.accepted_by)) {
+    if (nextStatus === 'accepted') {
       updates.push('accepted_by = ?', 'accepted_at = NOW()');
       params.push(req.user.id);
+    }
+
+    if (nextStatus === 'cancelled') {
+      updates.push('cancel_reason = ?', 'cancelled_by = ?', 'cancelled_at = NOW()');
+      params.push(String(req.body.cancel_reason || '').trim(), req.user.id);
     }
 
     if (nextStatus === 'completed') {

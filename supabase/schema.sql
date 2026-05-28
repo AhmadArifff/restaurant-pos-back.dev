@@ -240,6 +240,9 @@ create table if not exists customer_orders (
   accepted_at timestamptz null,
   completed_by bigint null references users(id) on delete set null,
   completed_at timestamptz null,
+  cancel_reason text null,
+  cancelled_by bigint null references users(id) on delete set null,
+  cancelled_at timestamptz null,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -276,6 +279,9 @@ create table if not exists customer_order_item_reviews (
 alter table users add column if not exists default_branch_id bigint null references branches(id) on delete set null;
 alter table dining_tables add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table customer_orders add column if not exists branch_id bigint null references branches(id) on delete set null;
+alter table customer_orders add column if not exists cancel_reason text null;
+alter table customer_orders add column if not exists cancelled_by bigint null references users(id) on delete set null;
+alter table customer_orders add column if not exists cancelled_at timestamptz null;
 alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table main_stock add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table stock_requests add column if not exists branch_id bigint null references branches(id) on delete set null;
