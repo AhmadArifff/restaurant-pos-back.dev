@@ -65,8 +65,37 @@ const sendError = (res, err, fallback = 'Aksi diskon belum bisa diproses. Silaka
   res.status(err.status_code || 500).json({ message: err.status_code ? err.message : fallback });
 };
 
+let discountValiditySchemaReady = false;
+
+const ignoreSchemaExistsError = (err) => (
+  err?.code === '42701'
+  || err?.code === '42P07'
+  || /Duplicate column|Duplicate key name|already exists/i.test(err?.message || '')
+);
+
+const ensureDiscountValiditySchema = async () => {
+  if (discountValiditySchemaReady) return;
+
+  const statements = [
+    'ALTER TABLE discount_programs ADD COLUMN start_at TIMESTAMP NULL',
+    'ALTER TABLE discount_programs ADD COLUMN end_at TIMESTAMP NULL',
+    'CREATE INDEX idx_discount_programs_status_dates ON discount_programs (status, start_at, end_at)',
+  ];
+
+  for (const statement of statements) {
+    try {
+      await db.query(statement);
+    } catch (err) {
+      if (!ignoreSchemaExistsError(err)) throw err;
+    }
+  }
+
+  discountValiditySchemaReady = true;
+};
+
 exports.list = async (req, res) => {
   try {
+    await ensureDiscountValiditySchema();
     const [rows] = await db.query(`
       SELECT dp.*,
         COALESCE(stats.used_count, 0) AS used_count,
@@ -93,6 +122,7 @@ exports.list = async (req, res) => {
 
 exports.active = async (req, res) => {
   try {
+    await ensureDiscountValiditySchema();
     const programs = await getActivePrograms(db, req.query.type || null);
     res.json(programs);
   } catch (err) {
@@ -102,6 +132,7 @@ exports.active = async (req, res) => {
 
 exports.preview = async (req, res) => {
   try {
+    await ensureDiscountValiditySchema();
     const subtotal = Number(req.body.subtotal || 0);
     const discount = await findBestDiscount({
       executor: db,
@@ -136,6 +167,7 @@ exports.preview = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
+    await ensureDiscountValiditySchema();
     const payload = toProgramPayload(req.body);
     if (!payload.name) return res.status(400).json({ message: 'Nama program wajib diisi' });
     if (payload.type === 'voucher' && !payload.code) return res.status(400).json({ message: 'Kode voucher wajib diisi' });
@@ -181,6 +213,7 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    await ensureDiscountValiditySchema();
     const payload = toProgramPayload(req.body);
     if (!payload.name) return res.status(400).json({ message: 'Nama program wajib diisi' });
     if (payload.type === 'voucher' && !payload.code) return res.status(400).json({ message: 'Kode voucher wajib diisi' });
