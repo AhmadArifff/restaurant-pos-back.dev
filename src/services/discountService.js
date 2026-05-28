@@ -1,4 +1,10 @@
-const normalizePhone = (value) => String(value || '').replace(/\D/g, '').slice(-16);
+const normalizePhone = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  let local = digits;
+  if (local.startsWith('62')) local = local.slice(2);
+  if (local.startsWith('0')) local = local.replace(/^0+/, '');
+  return local.length >= 5 ? `62${local}`.slice(0, 16) : '';
+};
 
 const toMoney = (value) => Number(Number(value || 0).toFixed(2));
 

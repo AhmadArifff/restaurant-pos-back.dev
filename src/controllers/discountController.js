@@ -15,11 +15,22 @@ const sanitizeDiscountType = (value) => (
   ['percent', 'fixed'].includes(value) ? value : 'percent'
 );
 
+const sanitizeDateTime = (value) => {
+  if (!value) return null;
+  const localDateTime = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2}))?/);
+  if (localDateTime) return `${localDateTime[1]} ${localDateTime[2]}:${localDateTime[3] || '00'}`;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+};
+
 const toProgramPayload = (body = {}) => {
   const type = sanitizeType(body.type);
   const code = type === 'voucher' && body.code
     ? String(body.code).trim().toUpperCase()
     : null;
+  const startAt = sanitizeDateTime(body.start_at);
+  const endAt = sanitizeDateTime(body.end_at);
 
   return {
     name: String(body.name || '').trim(),
@@ -36,8 +47,18 @@ const toProgramPayload = (body = {}) => {
     min_menu_rating: Math.min(5, Math.max(1, Number(body.min_menu_rating || 1))),
     bundle_product_ids: serializeBundleIds(parseBundleIds(body.bundle_product_ids)),
     status: body.status === 'inactive' ? 'inactive' : 'active',
+    start_at: startAt,
+    end_at: endAt,
     note: body.note ? String(body.note).trim() : null,
   };
+};
+
+const validateDateRange = (payload) => {
+  if (!payload.start_at || !payload.end_at) return null;
+  if (new Date(payload.end_at).getTime() < new Date(payload.start_at).getTime()) {
+    return 'Tanggal expired harus setelah tanggal mulai aktif';
+  }
+  return null;
 };
 
 const sendError = (res, err, fallback = 'Aksi diskon belum bisa diproses. Silakan coba lagi.') => {
@@ -121,12 +142,14 @@ exports.create = async (req, res) => {
     if (payload.type === 'bundle' && !parseBundleIds(payload.bundle_product_ids).length) {
       return res.status(400).json({ message: 'Paket bundle wajib memiliki minimal satu menu' });
     }
+    const dateError = validateDateRange(payload);
+    if (dateError) return res.status(400).json({ message: dateError });
 
     const [result] = await db.query(`
       INSERT INTO discount_programs
         (name, type, code, discount_type, discount_value, min_order_amount, usage_limit_per_phone,
-         total_usage_limit, min_service_rating, min_menu_rating, bundle_product_ids, status, note, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         total_usage_limit, min_service_rating, min_menu_rating, bundle_product_ids, status, start_at, end_at, note, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payload.name,
       payload.type,
@@ -140,6 +163,8 @@ exports.create = async (req, res) => {
       payload.min_menu_rating,
       payload.bundle_product_ids,
       payload.status,
+      payload.start_at,
+      payload.end_at,
       payload.note,
       req.user?.id || null,
     ]);
@@ -159,13 +184,15 @@ exports.update = async (req, res) => {
     const payload = toProgramPayload(req.body);
     if (!payload.name) return res.status(400).json({ message: 'Nama program wajib diisi' });
     if (payload.type === 'voucher' && !payload.code) return res.status(400).json({ message: 'Kode voucher wajib diisi' });
+    const dateError = validateDateRange(payload);
+    if (dateError) return res.status(400).json({ message: dateError });
 
     const [result] = await db.query(`
       UPDATE discount_programs
       SET name = ?, type = ?, code = ?, discount_type = ?, discount_value = ?,
           min_order_amount = ?, usage_limit_per_phone = ?, total_usage_limit = ?,
           min_service_rating = ?, min_menu_rating = ?, bundle_product_ids = ?,
-          status = ?, note = ?
+          status = ?, start_at = ?, end_at = ?, note = ?
       WHERE id = ?
     `, [
       payload.name,
@@ -180,6 +207,8 @@ exports.update = async (req, res) => {
       payload.min_menu_rating,
       payload.bundle_product_ids,
       payload.status,
+      payload.start_at,
+      payload.end_at,
       payload.note,
       req.params.id,
     ]);

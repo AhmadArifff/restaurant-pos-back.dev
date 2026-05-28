@@ -298,6 +298,8 @@ create table if not exists discount_programs (
   min_menu_rating integer not null default 1,
   bundle_product_ids text null,
   status branch_status not null default 'active',
+  start_at timestamptz null,
+  end_at timestamptz null,
   note text null,
   created_by bigint null references users(id) on delete set null,
   created_at timestamptz default now(),
@@ -327,6 +329,8 @@ alter table customer_orders add column if not exists cancelled_at timestamptz nu
 alter table customer_orders add column if not exists discount_label varchar(160) null;
 alter table customer_orders add column if not exists discount_program_id bigint null references discount_programs(id) on delete set null;
 alter table customer_orders add column if not exists voucher_code varchar(80) null;
+alter table discount_programs add column if not exists start_at timestamptz null;
+alter table discount_programs add column if not exists end_at timestamptz null;
 alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table transactions add column if not exists discount_rate numeric(5,2) not null default 0;
 alter table transactions add column if not exists discount_amount numeric(12,2) not null default 0;
@@ -393,6 +397,7 @@ create index if not exists idx_customer_order_item_reviews_product_id on custome
 create index if not exists idx_discount_programs_status_type on discount_programs(status, type);
 create index if not exists idx_discount_programs_type_status_value on discount_programs(type, status, discount_value desc);
 create index if not exists idx_discount_programs_code on discount_programs(code);
+create index if not exists idx_discount_programs_status_dates on discount_programs(status, start_at, end_at);
 create index if not exists idx_discount_redemptions_phone on discount_redemptions(program_id, normalized_phone);
 create index if not exists idx_discount_redemptions_transaction on discount_redemptions(transaction_id);
 create index if not exists idx_discount_redemptions_order on discount_redemptions(order_id);

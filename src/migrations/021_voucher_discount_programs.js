@@ -14,6 +14,8 @@ exports.up = async (db) => {
       min_menu_rating INT NOT NULL DEFAULT 1,
       bundle_product_ids TEXT NULL,
       status ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+      start_at DATETIME NULL,
+      end_at DATETIME NULL,
       note TEXT NULL,
       created_by INT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -47,6 +49,8 @@ exports.up = async (db) => {
   `);
 
   const alterations = [
+    ['discount_programs', 'start_at DATETIME NULL'],
+    ['discount_programs', 'end_at DATETIME NULL'],
     ['transactions', 'discount_rate DECIMAL(5,2) NOT NULL DEFAULT 0'],
     ['transactions', 'discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0'],
     ['transactions', 'discount_label VARCHAR(160) NULL'],
