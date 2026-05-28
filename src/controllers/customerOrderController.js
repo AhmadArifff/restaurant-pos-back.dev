@@ -522,6 +522,11 @@ exports.submitReview = async (req, res) => {
 
     await conn.beginTransaction();
     const reviewProgram = await getReviewProgram(conn);
+    if (!reviewProgram) {
+      const err = new Error('Program diskon review sedang tidak aktif');
+      err.status_code = 400;
+      throw err;
+    }
     const reviewPhone = req.body.customer_phone || order.customer_phone || '';
     const usage = reviewProgram?.id
       ? await validateProgramUsage(conn, reviewProgram, reviewPhone)

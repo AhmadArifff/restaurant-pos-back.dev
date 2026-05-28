@@ -64,9 +64,14 @@ const getReviewProgram = async (executor) => {
     SELECT * FROM discount_programs
     WHERE type = 'review_reward' AND status = 'active'
     ORDER BY id ASC
-    LIMIT 1
   `);
-  return normalizeProgram(rows[0]) || {
+
+  const programs = rows.map(normalizeProgram).filter(Boolean);
+  const activeProgram = programs.find(isProgramActiveNow);
+  if (activeProgram) return activeProgram;
+  if (programs.length > 0) return null;
+
+  return {
     id: null,
     name: 'Reward Review Pelanggan',
     type: 'review_reward',
