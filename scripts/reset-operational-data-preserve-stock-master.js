@@ -2,8 +2,15 @@ require('dotenv').config();
 require('dotenv').config({ path: '.env.vercel', override: true });
 
 const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
 
 const connectionString = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
+const readyStockFromEnv = Number(process.env.RESET_READY_STOCK_PER_PRODUCT || 100);
+const DEFAULT_READY_STOCK_PER_BRANCH = Number.isFinite(readyStockFromEnv) && readyStockFromEnv > 0
+  ? readyStockFromEnv
+  : 100;
 
 if (!connectionString) {
   console.error('SUPABASE_DATABASE_URL atau DATABASE_URL wajib diisi.');
@@ -43,6 +50,52 @@ const getDetailText = (details, predicate) => {
   if (detail.text) return detail.text;
   if (Array.isArray(detail.lines)) return detail.lines[0] || null;
   return null;
+};
+
+const parsePrice = (value) => {
+  const match = String(value || '').match(/Rp\s*([\d.]+)/i);
+  if (!match) return 0;
+  return Number(match[1].replace(/\./g, '')) || 0;
+};
+
+const loadLocalLandingMenu = () => {
+  const menuPath = path.resolve(process.cwd(), '..', 'kebab-pos-client', 'data', 'landing', 'menuContent.js');
+  const raw = fs.readFileSync(menuPath, 'utf8');
+  const code = raw
+    .replace(/export\s+const\s+menuContent\s*=/, 'const menuContent =')
+    .replace(/;\s*$/, '\nresult = menuContent;');
+  const context = { result: null };
+  vm.createContext(context);
+  vm.runInContext(code, context, { filename: menuPath });
+  return context.result;
+};
+
+const normalizeLandingMenu = (menuContent) => {
+  const categories = Array.isArray(menuContent?.categories) ? menuContent.categories : [];
+  return categories.map((category, index) => ({
+    category_key: normalizeKey(category.id || category.label, `category-${index + 1}`),
+    name: category.label || `Kategori ${index + 1}`,
+    items: (Array.isArray(category.items) ? category.items : []).map((item) => ({
+      name: item.name || item.orderName,
+      price: parsePrice(item.price),
+      image_url: item.image || null,
+      description: item.description || null,
+    })).filter((item) => item.name && item.price > 0),
+  })).filter((category) => category.items.length > 0);
+};
+
+const parseLandingMenu = async (client) => {
+  try {
+    const { rows } = await client.query(
+      "select setting_value from website_settings where setting_key = 'landing_menu_tabs' limit 1"
+    );
+    const rawValue = rows[0]?.setting_value;
+    const parsed = typeof rawValue === 'string' ? JSON.parse(rawValue) : rawValue;
+    const normalized = normalizeLandingMenu(parsed);
+    if (normalized.length) return normalized;
+  } catch (_) {}
+
+  return normalizeLandingMenu(loadLocalLandingMenu());
 };
 
 const parseLandingBranches = async (client) => {
@@ -102,37 +155,125 @@ const syncBranchesFromLanding = async (client) => {
   return activeKeys;
 };
 
-const getStockSnapshots = async (client) => {
-  const { rows } = await client.query(`
-    select
-      si.id as stock_item_id,
-      si.name,
-      si.stock as fallback_stock,
-      si.total_price as fallback_total_price,
-      si.price_per_unit as fallback_price,
-      ms.branch_id,
-      coalesce(sum(case when ms.type = 'in' then ms.qty else -ms.qty end), 0) as balance_qty,
-      coalesce(sum(case when ms.type = 'in' then ms.total_cost else -ms.total_cost end), 0) as balance_value,
-      coalesce(
-        nullif(sum(case when ms.type = 'in' then ms.total_cost else 0 end), 0)
-          / nullif(sum(case when ms.type = 'in' then ms.qty else 0 end), 0),
-        nullif(si.price_per_unit, 0),
-        0
-      ) as cost_per_unit
-    from stock_items si
-    left join main_stock ms on ms.stock_item_id = si.id
-    group by si.id, si.name, si.stock, si.total_price, si.price_per_unit, ms.branch_id
-    order by si.name asc, ms.branch_id asc
-  `);
+const ensureCategory = async (client, categoryName) => {
+  const { rows } = await client.query('select id from categories where name = $1 limit 1', [categoryName]);
+  if (rows.length) return rows[0].id;
 
-  const grouped = new Map();
-  for (const row of rows) {
-    const key = Number(row.stock_item_id);
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
+  const inserted = await client.query(
+    'insert into categories (name) values ($1) returning id',
+    [categoryName]
+  );
+  return inserted.rows[0].id;
+};
+
+const ensureProduct = async (client, item, categoryId) => {
+  const { rows } = await client.query('select id from products where name = $1 limit 1', [item.name]);
+  if (rows.length) {
+    await client.query(`
+      update products
+      set price = $1,
+          category_id = $2,
+          image_url = $3
+      where id = $4
+    `, [item.price, categoryId, item.image_url, rows[0].id]);
+    return rows[0].id;
   }
 
-  return grouped;
+  const inserted = await client.query(`
+    insert into products (name, price, category_id, image_url)
+    values ($1, $2, $3, $4)
+    returning id
+  `, [item.name, item.price, categoryId, item.image_url]);
+  return inserted.rows[0].id;
+};
+
+const ensureReadyStockItem = async (client, item) => {
+  const stockName = `Ready Stock - ${item.name}`;
+  const costPerUnit = Math.max(1, Math.round(Number(item.price || 0) * 0.45));
+  const { rows } = await client.query('select id from stock_items where name = $1 limit 1', [stockName]);
+  if (rows.length) {
+    await client.query(`
+      update stock_items
+      set unit = 'porsi',
+          min_stock = 10,
+          price_per_unit = $1,
+          stock = 0,
+          total_price = 0
+      where id = $2
+    `, [costPerUnit, rows[0].id]);
+    return { id: rows[0].id, costPerUnit };
+  }
+
+  const inserted = await client.query(`
+    insert into stock_items (name, unit, stock, total_price, price_per_unit, min_stock)
+    values ($1, 'porsi', 0, 0, $2, 10)
+    returning id
+  `, [stockName, costPerUnit]);
+  return { id: inserted.rows[0].id, costPerUnit };
+};
+
+const seedLandingMenuProductsAndStock = async ({ client, actorId, fallbackBranchId }) => {
+  const landingMenu = await parseLandingMenu(client);
+  const { rows: activeBranches } = await client.query("select id from branches where status = 'active' order by id");
+  const branchIds = activeBranches.length ? activeBranches.map((row) => row.id) : [fallbackBranchId].filter(Boolean);
+  if (!branchIds.length) throw new Error('Tidak ada cabang aktif untuk seed stok produk.');
+
+  await client.query('delete from product_ingredients');
+  await client.query('update stock_items set stock = 0, total_price = 0');
+
+  let productCount = 0;
+  let categoryCount = 0;
+  let stockRows = 0;
+
+  for (const category of landingMenu) {
+    const categoryId = await ensureCategory(client, category.name);
+    categoryCount += 1;
+
+    for (const item of category.items) {
+      const productId = await ensureProduct(client, item, categoryId);
+      const stockItem = await ensureReadyStockItem(client, item);
+
+      await client.query(`
+        insert into product_ingredients (product_id, stock_item_id, qty)
+        values ($1, $2, 1)
+        on conflict (product_id, stock_item_id)
+        do update set qty = excluded.qty
+      `, [productId, stockItem.id]);
+
+      let totalQty = 0;
+      let totalValue = 0;
+      for (const branchId of branchIds) {
+        const qty = DEFAULT_READY_STOCK_PER_BRANCH;
+        const totalCost = qty * stockItem.costPerUnit;
+        totalQty += qty;
+        totalValue += totalCost;
+        stockRows += 1;
+        await client.query(`
+          insert into main_stock
+            (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
+          values ($1, $2, $3, 'in', 'adjustment', $4, $5, $6)
+        `, [
+          stockItem.id,
+          qty,
+          stockItem.costPerUnit,
+          'Saldo awal ready stock dari menu landing page setelah reset operasional',
+          branchId,
+          actorId,
+        ]);
+      }
+
+      await client.query(`
+        update stock_items
+        set stock = $1,
+            total_price = $2
+        where id = $3
+      `, [totalQty, totalValue, stockItem.id]);
+
+      productCount += 1;
+    }
+  }
+
+  return { categoryCount, productCount, stockRows };
 };
 
 const reset = async () => {
@@ -153,8 +294,6 @@ const reset = async () => {
 
     const { rows: branchRows } = await client.query("select id from branches where status = 'active' order by id limit 1");
     const fallbackBranchId = branchRows[0]?.id || null;
-
-    const stockSnapshots = await getStockSnapshots(client);
 
     const tablesToDelete = [
       'discount_redemptions',
@@ -177,50 +316,13 @@ const reset = async () => {
       await deleteIfExists(client, table);
     }
 
-    let seededRows = 0;
-    for (const [stockItemId, snapshots] of stockSnapshots.entries()) {
-      const positiveSnapshots = snapshots.filter((row) => Number(row.balance_qty || 0) > 0);
-      const seedRows = positiveSnapshots.length
-        ? positiveSnapshots
-        : snapshots
-            .filter((row) => Number(row.fallback_stock || 0) > 0)
-            .slice(0, 1)
-            .map((row) => ({
-              ...row,
-              branch_id: fallbackBranchId,
-              balance_qty: Number(row.fallback_stock || 0),
-              cost_per_unit: Number(row.fallback_price || 0),
-            }));
-
-      let totalQty = 0;
-      let totalValue = 0;
-      for (const row of seedRows) {
-        const qty = Number(row.balance_qty || 0);
-        if (qty <= 0) continue;
-        const cost = Number(row.cost_per_unit || row.fallback_price || 0);
-        totalQty += qty;
-        totalValue += qty * cost;
-        seededRows += 1;
-        await client.query(`
-          insert into main_stock
-            (stock_item_id, qty, cost_per_unit, type, source, note, branch_id, created_by)
-          values ($1, $2, $3, 'in', 'adjustment', 'Saldo awal setelah reset data operasional', $4, $5)
-        `, [stockItemId, qty, cost, row.branch_id || fallbackBranchId, actorId]);
-      }
-
-      await client.query(`
-        update stock_items
-        set stock = $1,
-            total_price = $2
-        where id = $3
-      `, [totalQty, totalValue, stockItemId]);
-    }
+    const seedResult = await seedLandingMenuProductsAndStock({ client, actorId, fallbackBranchId });
 
     await client.query('commit');
     console.log('\nReset operasional Supabase selesai.');
-    console.log('Data yang dihapus: klaim diskon, transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, dan histori main_stock lama.');
-    console.log('Data yang dipertahankan: program voucher/diskon, users/tim kasir, branches, dining_tables, products, categories, product_ingredients, website_settings, dan stock_items master.');
-    console.log(`Saldo stok awal baru dibuat ulang: ${seededRows} baris main_stock.`);
+    console.log('Data yang dihapus: klaim diskon, transaksi, item transaksi, order meja, review, pengajuan stok, audit stok, attendance, histori main_stock lama, dan resep produk lama.');
+    console.log('Data yang dipertahankan: program voucher/diskon, users/tim kasir, branches, dining_tables, website_settings, serta master category/product/stock item yang di-upsert agar seed ulang tidak hilang.');
+    console.log(`Seed menu landing page: ${seedResult.categoryCount} kategori, ${seedResult.productCount} produk, ${seedResult.stockRows} saldo stok cabang.`);
   } catch (error) {
     await client.query('rollback');
     console.error('Reset operasional gagal:', error.message);
