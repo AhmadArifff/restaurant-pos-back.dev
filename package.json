@@ -12,6 +12,7 @@
     "schema:supabase": "node scripts/apply-supabase-schema.js",
     "migrate:supabase": "node scripts/migrate-mysql-to-supabase.js",
     "reset:supabase:test": "node scripts/reset-supabase-test-data.js",
+    "reset:supabase:operational": "node scripts/reset-operational-data-preserve-stock-master.js",
     "storage:supabase": "node scripts/upload-assets-to-supabase.js",
     "storage:supabase:update-db": "node scripts/upload-assets-to-supabase.js --update-db"
   },
