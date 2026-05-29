@@ -7,6 +7,7 @@ const {
   calculateAmount,
   findBestDiscount,
   getReviewProgram,
+  parseBundleItems,
   recordRedemption,
   validateProgramUsage,
 } = require('../services/discountService');
@@ -63,6 +64,7 @@ const attachOrderDetails = async (order) => {
 
   return {
     ...order,
+    discount_bundle_items: parseBundleItems(order.discount_bundle_product_ids),
     items: items.map((item) => ({
       ...item,
       review: reviewByItemId[item.id] || null,
@@ -73,9 +75,12 @@ const attachOrderDetails = async (order) => {
 
 const getOrderRowByCode = async (orderCode) => {
   const [rows] = await db.query(`
-    SELECT co.*, dt.table_number, dt.table_name
+    SELECT co.*, dt.table_number, dt.table_name,
+      dp.type AS discount_program_type,
+      dp.bundle_product_ids AS discount_bundle_product_ids
     FROM customer_orders co
     JOIN dining_tables dt ON dt.id = co.table_id
+    LEFT JOIN discount_programs dp ON dp.id = co.discount_program_id
     WHERE co.order_code = ?
     LIMIT 1
   `, [orderCode]);
@@ -84,9 +89,12 @@ const getOrderRowByCode = async (orderCode) => {
 
 const getOrderRowById = async (id) => {
   const [rows] = await db.query(`
-    SELECT co.*, dt.table_number, dt.table_name
+    SELECT co.*, dt.table_number, dt.table_name,
+      dp.type AS discount_program_type,
+      dp.bundle_product_ids AS discount_bundle_product_ids
     FROM customer_orders co
     JOIN dining_tables dt ON dt.id = co.table_id
+    LEFT JOIN discount_programs dp ON dp.id = co.discount_program_id
     WHERE co.id = ?
     LIMIT 1
   `, [id]);
@@ -792,13 +800,21 @@ exports.listOrders = async (req, res) => {
 };
 
 exports.updateOrderStatus = async (req, res) => {
+  const conn = await db.getConnection();
   try {
     const nextStatus = req.body.status;
     if (!STAFF_ORDER_STATUSES.includes(nextStatus)) {
       return res.status(400).json({ message: 'Status pesanan tidak valid' });
     }
 
-    const order = await getOrderRowById(req.params.id);
+    const [orderRows] = await conn.query(`
+      SELECT co.*, dt.table_number, dt.table_name
+      FROM customer_orders co
+      JOIN dining_tables dt ON dt.id = co.table_id
+      WHERE co.id = ?
+      LIMIT 1
+    `, [req.params.id]);
+    const order = orderRows[0] || null;
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
     if (order.status === 'completed') return res.status(400).json({ message: 'Pesanan sudah selesai' });
@@ -849,7 +865,17 @@ exports.updateOrderStatus = async (req, res) => {
     }
 
     params.push(order.id);
-    await db.query(`UPDATE customer_orders SET ${updates.join(', ')} WHERE id = ?`, params);
+    await conn.beginTransaction();
+    await conn.query(`UPDATE customer_orders SET ${updates.join(', ')} WHERE id = ?`, params);
+
+    if (isCancelling) {
+      await conn.query(
+        'DELETE FROM discount_redemptions WHERE order_id = ?',
+        [order.id]
+      );
+    }
+
+    await conn.commit();
 
     const updated = await attachOrderDetails(await getOrderRowById(order.id));
     res.json({
@@ -857,9 +883,12 @@ exports.updateOrderStatus = async (req, res) => {
       data: updated,
     });
   } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
     res.status(err.status_code || 500).json({
       message: err.message,
       validation_errors: err.validation_errors || undefined,
     });
+  } finally {
+    conn.release();
   }
 };

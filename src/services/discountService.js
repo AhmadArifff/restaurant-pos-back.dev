@@ -243,6 +243,7 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
       discount_label: program.name,
       voucher_code: program.type === 'voucher' ? program.code : null,
       normalized_phone: usage.normalizedPhone,
+      bundle_items: program.type === 'bundle' ? program.bundle_items : [],
     };
     if (!best || current.discount_amount > best.discount_amount) best = current;
   }

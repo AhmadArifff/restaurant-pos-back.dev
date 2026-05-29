@@ -184,6 +184,11 @@ exports.delete = async (req, res) => {
 
     const reason = String(req.body?.reason || '').trim()
       || `Transaksi ${transaction.invoice_number} dihapus/void oleh ${req.user.name || req.user.role}`;
+    const [linkedOrders] = await conn.query(
+      'SELECT id FROM customer_orders WHERE transaction_id = ?',
+      [transaction.id]
+    );
+    const linkedOrderIds = linkedOrders.map((order) => Number(order.id)).filter(Boolean);
     await conn.query(`
       UPDATE customer_orders
       SET status = 'cancelled',
@@ -193,6 +198,14 @@ exports.delete = async (req, res) => {
           transaction_id = NULL
       WHERE transaction_id = ?
     `, [reason, req.user.id, transaction.id]);
+
+    await conn.query('DELETE FROM discount_redemptions WHERE transaction_id = ?', [transaction.id]);
+    if (linkedOrderIds.length) {
+      await conn.query(
+        `DELETE FROM discount_redemptions WHERE order_id IN (${linkedOrderIds.map(() => '?').join(',')})`,
+        linkedOrderIds
+      );
+    }
 
     await conn.query('DELETE FROM transactions WHERE id = ?', [transaction.id]);
     await conn.commit();

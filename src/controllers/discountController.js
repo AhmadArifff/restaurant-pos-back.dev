@@ -177,6 +177,8 @@ exports.preview = async (req, res) => {
       type: discount.program.type,
       discount_rate: discount.discount_rate,
       discount_amount: discount.discount_amount,
+      discount_base: discount.discount_base || subtotal,
+      bundle_items: discount.bundle_items || [],
       final_total: Math.max(0, subtotal - discount.discount_amount),
       message: `${discount.discount_label} bisa digunakan.`,
     });
