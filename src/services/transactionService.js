@@ -514,17 +514,17 @@ exports.createTransaction = async ({
       discount,
     });
 
-    if (discount?.program?.id) {
+    for (const component of (discount?.components || [])) {
       await recordRedemption({
         executor: conn,
-        program: discount.program,
+        program: component.program,
         transactionId,
         orderId: orderLink?.order_id || null,
         customerPhone,
-        subtotal,
-        discountAmount,
+        subtotal: component.discount_base,
+        discountAmount: component.discount_amount,
         createdBy: userId,
-        voucherCode: discount.voucher_code,
+        voucherCode: component.voucher_code,
       });
     }
 

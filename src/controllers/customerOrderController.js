@@ -56,6 +56,15 @@ const attachOrderDetails = async (order) => {
     'SELECT * FROM customer_order_item_reviews WHERE order_id = ?',
     [order.id]
   );
+  const [discountBreakdown] = await db.query(`
+    SELECT dr.program_id, dr.subtotal AS discount_base, dr.discount_amount,
+      dr.voucher_code, dp.name AS label, dp.type, dp.discount_type,
+      dp.discount_value, dp.bundle_product_ids
+    FROM discount_redemptions dr
+    JOIN discount_programs dp ON dp.id = dr.program_id
+    WHERE dr.order_id = ?
+    ORDER BY dr.id ASC
+  `, [order.id]);
 
   const reviewByItemId = itemReviews.reduce((acc, review) => {
     acc[review.order_item_id] = review;
@@ -65,6 +74,13 @@ const attachOrderDetails = async (order) => {
   return {
     ...order,
     discount_bundle_items: parseBundleItems(order.discount_bundle_product_ids),
+    discount_breakdown: discountBreakdown.map((item) => ({
+      ...item,
+      discount_value: Number(item.discount_value || 0),
+      discount_base: Number(item.discount_base || 0),
+      discount_amount: Number(item.discount_amount || 0),
+      bundle_items: parseBundleItems(item.bundle_product_ids),
+    })),
     items: items.map((item) => ({
       ...item,
       review: reviewByItemId[item.id] || null,
@@ -465,15 +481,15 @@ exports.createOrder = async (req, res) => {
       `, [orderId, item.product_id, item.product_name, item.price, item.qty, item.subtotal, item.note]);
     }
 
-    if (discount?.program?.id) {
+    for (const component of (discount?.components || [])) {
       await recordRedemption({
         executor: conn,
-        program: discount.program,
+        program: component.program,
         orderId,
         customerPhone: customer_phone || '',
-        subtotal,
-        discountAmount,
-        voucherCode: discount.voucher_code,
+        subtotal: component.discount_base,
+        discountAmount: component.discount_amount,
+        voucherCode: component.voucher_code,
       });
     }
 
@@ -587,7 +603,14 @@ exports.submitReview = async (req, res) => {
       ]);
     }
 
-    const reviewDiscountAmount = calculateAmount(Number(order.subtotal), reviewProgram);
+    const [[bundleScope]] = await conn.query(`
+      SELECT COALESCE(SUM(dr.subtotal), 0) AS bundle_base
+      FROM discount_redemptions dr
+      JOIN discount_programs dp ON dp.id = dr.program_id
+      WHERE dr.order_id = ? AND dp.type = 'bundle'
+    `, [order.id]);
+    const reviewDiscountBase = toMoney(Math.max(0, Number(order.subtotal || 0) - Number(bundleScope?.bundle_base || 0)));
+    const reviewDiscountAmount = calculateAmount(reviewDiscountBase, reviewProgram);
     const existingDiscountAmount = Number(order.discount_amount || 0);
     const discountAmount = toMoney(Math.min(Number(order.subtotal), existingDiscountAmount + reviewDiscountAmount));
     const finalTotal = toMoney(Number(order.subtotal) - discountAmount);
@@ -628,7 +651,7 @@ exports.submitReview = async (req, res) => {
         orderId: order.id,
         transactionId: order.transaction_id || null,
         customerPhone: reviewPhone,
-        subtotal: Number(order.subtotal || 0),
+        subtotal: reviewDiscountBase,
         discountAmount: reviewDiscountAmount,
         createdBy: null,
       });

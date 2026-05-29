@@ -196,59 +196,98 @@ const getProgramDiscountBase = (subtotal, items, program) => {
   return toMoney(bundleSubtotal);
 };
 
+const makeDiscountComponent = ({ program, usage, discountBase, amount }) => ({
+  program,
+  discount_base: toMoney(discountBase),
+  discount_amount: toMoney(amount),
+  discount_rate: program.discount_type === 'percent' ? Number(program.discount_value || 0) : 0,
+  discount_label: program.name,
+  voucher_code: program.type === 'voucher' ? program.code : null,
+  normalized_phone: usage.normalizedPhone,
+  bundle_items: program.type === 'bundle' ? program.bundle_items : [],
+});
+
+const mergeDiscountComponents = (components, total) => {
+  const validComponents = (components || []).filter((component) => Number(component.discount_amount || 0) > 0);
+  if (!validComponents.length) return null;
+
+  const discountAmount = toMoney(Math.min(
+    Number(total || 0),
+    validComponents.reduce((sum, component) => sum + Number(component.discount_amount || 0), 0)
+  ));
+  const primary = validComponents[0];
+  const voucher = validComponents.find((component) => component.program?.type === 'voucher');
+  const bundle = validComponents.find((component) => component.program?.type === 'bundle');
+
+  return {
+    program: primary.program,
+    programs: validComponents,
+    components: validComponents,
+    discount_base: toMoney(validComponents.reduce((sum, component) => sum + Number(component.discount_base || 0), 0)),
+    discount_amount: discountAmount,
+    discount_rate: validComponents.length === 1 ? primary.discount_rate : 0,
+    discount_label: validComponents.map((component) => component.discount_label).join(' + '),
+    voucher_code: voucher?.voucher_code || null,
+    normalized_phone: voucher?.normalized_phone || primary.normalized_phone,
+    bundle_items: bundle?.bundle_items || [],
+    type: validComponents.length > 1 ? 'mixed' : primary.program.type,
+  };
+};
+
 const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = '', customerPhone = '' }) => {
   const total = Number(subtotal || 0);
   if (total <= 0) return null;
 
   const normalizedCode = String(voucherCode || '').trim().toUpperCase();
-  const candidates = [];
+  const components = [];
+  let voucher = null;
 
   if (normalizedCode) {
     const [rows] = await executor.query(
       "SELECT * FROM discount_programs WHERE type = 'voucher' AND UPPER(code) = ? LIMIT 1",
       [normalizedCode]
     );
-    const voucher = normalizeProgram(rows[0]);
+    voucher = normalizeProgram(rows[0]);
     if (!voucher) {
       const err = new Error('Kode voucher tidak ditemukan');
       err.status_code = 400;
       throw err;
     }
-    candidates.push(voucher);
   }
 
   const bundles = await getActivePrograms(executor, 'bundle');
-  candidates.push(...bundles.filter((program) => cartHasBundle(items, program.bundle_items)));
-
-  let best = null;
-  for (const program of candidates) {
+  let bestBundle = null;
+  for (const program of bundles.filter((item) => cartHasBundle(items, item.bundle_items))) {
     const discountBase = getProgramDiscountBase(total, items, program);
     if (discountBase < Number(program.min_order_amount || 0)) continue;
     const usage = await validateProgramUsage(executor, program, customerPhone);
-    if (!usage.valid) {
-      if (normalizedCode && program.type === 'voucher') {
-        const err = new Error(usage.message);
-        err.status_code = 400;
-        throw err;
-      }
-      continue;
-    }
+    if (!usage.valid) continue;
     const amount = calculateAmount(discountBase, program);
     if (amount <= 0) continue;
-    const current = {
-      program,
-      discount_base: discountBase,
-      discount_amount: amount,
-      discount_rate: program.discount_type === 'percent' ? Number(program.discount_value || 0) : 0,
-      discount_label: program.name,
-      voucher_code: program.type === 'voucher' ? program.code : null,
-      normalized_phone: usage.normalizedPhone,
-      bundle_items: program.type === 'bundle' ? program.bundle_items : [],
-    };
-    if (!best || current.discount_amount > best.discount_amount) best = current;
+    const current = makeDiscountComponent({ program, usage, discountBase, amount });
+    if (!bestBundle || current.discount_amount > bestBundle.discount_amount) bestBundle = current;
   }
 
-  return best;
+  if (bestBundle) components.push(bestBundle);
+
+  if (voucher) {
+    const usage = await validateProgramUsage(executor, voucher, customerPhone);
+    if (!usage.valid) {
+      const err = new Error(usage.message);
+      err.status_code = 400;
+      throw err;
+    }
+
+    const voucherBase = toMoney(Math.max(0, total - Number(bestBundle?.discount_base || 0)));
+    if (voucherBase >= Number(voucher.min_order_amount || 0)) {
+      const amount = calculateAmount(voucherBase, voucher);
+      if (amount > 0) {
+        components.push(makeDiscountComponent({ program: voucher, usage, discountBase: voucherBase, amount }));
+      }
+    }
+  }
+
+  return mergeDiscountComponents(components, total);
 };
 
 const recordRedemption = async ({
