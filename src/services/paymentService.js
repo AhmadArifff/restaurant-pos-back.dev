@@ -29,7 +29,9 @@ const toNullable = (value) => {
   return trimmed || null;
 };
 
-const ensurePaymentTables = async () => {
+let ensurePaymentTablesPromise = null;
+
+const ensurePaymentTablesUnsafe = async () => {
   if (isPostgres()) {
     await db.query(`
       CREATE TABLE IF NOT EXISTS payment_methods (
@@ -106,6 +108,16 @@ const ensurePaymentTables = async () => {
   }
 
   await seedDefaultPaymentMethods();
+};
+
+const ensurePaymentTables = async () => {
+  if (!ensurePaymentTablesPromise) {
+    ensurePaymentTablesPromise = ensurePaymentTablesUnsafe().catch((err) => {
+      ensurePaymentTablesPromise = null;
+      throw err;
+    });
+  }
+  return ensurePaymentTablesPromise;
 };
 
 const seedDefaultPaymentMethods = async () => {

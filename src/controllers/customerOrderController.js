@@ -224,6 +224,46 @@ const buildPublicMenu = async (branchId = null) => {
   return products;
 };
 
+const getReadyStockForProducts = async (executor, productIds = [], branchId = null) => {
+  const ids = [...new Set((productIds || []).map((id) => Number(id)).filter(Boolean))];
+  if (!ids.length) return new Map();
+
+  const [stockUsers] = await executor.query(
+    "SELECT id, name, role FROM users WHERE role IN ('kasir', 'admin') ORDER BY role DESC, name ASC"
+  );
+  if (!stockUsers.length) return new Map(ids.map((id) => [id, 0]));
+
+  const placeholders = ids.map(() => '?').join(',');
+  const [ingredientRows] = await executor.query(`
+    SELECT pi.product_id, pi.qty, si.id AS stock_item_id
+    FROM product_ingredients pi
+    JOIN stock_items si ON pi.stock_item_id = si.id
+    WHERE pi.product_id IN (${placeholders})
+    ORDER BY pi.product_id ASC, pi.id ASC
+  `, ids);
+
+  const ingredientsByProductId = groupIngredientsByProductId(ingredientRows);
+  const stockItemIds = [
+    ...new Set(ingredientRows.map((ingredient) => Number(ingredient.stock_item_id)).filter(Boolean)),
+  ];
+  const userBalances = await getUserIngredientBalances(
+    executor,
+    stockItemIds,
+    stockUsers.map((user) => user.id),
+    branchId
+  );
+
+  return new Map(ids.map((productId) => {
+    const ingredients = ingredientsByProductId[Number(productId)] || [];
+    if (!ingredients.length) return [Number(productId), 0];
+    const bestReadyStock = stockUsers.reduce((best, user) => {
+      const ready = calculateCanMake(ingredients, userBalances[Number(user.id)] || {});
+      return Math.max(best, ready);
+    }, 0);
+    return [Number(productId), bestReadyStock];
+  }));
+};
+
 const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSourceUserId }) => {
   if (order.transaction_id) return { transaction_id: order.transaction_id, reused: true };
 
@@ -398,7 +438,7 @@ exports.getPublicMenu = async (req, res) => {
 };
 
 exports.createOrder = async (req, res) => {
-  const conn = await db.getConnection();
+  let conn;
   try {
     await ensurePaymentTables();
     const { table_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
@@ -408,6 +448,7 @@ exports.createOrder = async (req, res) => {
       return res.status(400).json({ message: 'Pesanan belum memiliki menu' });
     }
 
+    conn = await db.getConnection();
     const [tables] = await conn.query(
       "SELECT * FROM dining_tables WHERE qr_token = ? AND status = 'active' LIMIT 1",
       [table_token]
@@ -429,23 +470,50 @@ exports.createOrder = async (req, res) => {
       throw err;
     }
 
-    const orderItems = [];
-    let subtotal = 0;
-    const menuStock = new Map(
-      (await buildPublicMenu(tables[0].branch_id || null)).map((product) => [Number(product.id), Number(product.stock || 0)])
+    const requestedByProductId = new Map();
+    for (const rawItem of items) {
+      const productId = Number(rawItem.product_id);
+      if (!productId) continue;
+      const previous = requestedByProductId.get(productId);
+      requestedByProductId.set(productId, {
+        product_id: productId,
+        qty: Number(previous?.qty || 0) + Math.max(1, Number(rawItem.qty || 1)),
+        note: previous?.note || (rawItem.note ? String(rawItem.note).trim() : null),
+      });
+    }
+    const requestedItems = [...requestedByProductId.values()];
+    if (!requestedItems.length) {
+      const err = new Error('Pesanan belum memiliki menu valid');
+      err.status_code = 400;
+      throw err;
+    }
+
+    const requestedProductIds = requestedItems.map((item) => item.product_id);
+    const placeholders = requestedProductIds.map(() => '?').join(',');
+    const [products] = await conn.query(
+      `SELECT id, name, price FROM products WHERE id IN (${placeholders})`,
+      requestedProductIds
+    );
+    const productById = new Map(products.map((product) => [Number(product.id), product]));
+    const readyStockByProduct = await getReadyStockForProducts(
+      conn,
+      requestedProductIds,
+      tables[0].branch_id || null
     );
 
-    for (const rawItem of items) {
+    const orderItems = [];
+    let subtotal = 0;
+
+    for (const rawItem of requestedItems) {
       const qty = Math.max(1, Number(rawItem.qty || 1));
-      const [products] = await conn.query('SELECT id, name, price FROM products WHERE id = ? LIMIT 1', [rawItem.product_id]);
-      if (!products.length) {
+      const product = productById.get(Number(rawItem.product_id));
+      if (!product) {
         const err = new Error(`Menu dengan ID ${rawItem.product_id} tidak ditemukan`);
         err.status_code = 400;
         throw err;
       }
 
-      const product = products[0];
-      const available = menuStock.get(Number(product.id)) || 0;
+      const available = readyStockByProduct.get(Number(product.id)) || 0;
       if (available < qty) {
         const err = new Error(`Stok ${product.name} di cabang ini tidak cukup (tersedia: ${available})`);
         err.status_code = 400;
@@ -460,7 +528,7 @@ exports.createOrder = async (req, res) => {
         price,
         qty,
         subtotal: lineSubtotal,
-        note: rawItem.note ? String(rawItem.note).trim() : null,
+        note: rawItem.note || null,
       });
     }
 
@@ -539,13 +607,15 @@ exports.createOrder = async (req, res) => {
       data: order,
     });
   } catch (err) {
-    await conn.rollback();
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
     res.status(err.status_code || 500).json({
       message: err.message,
       validation_errors: err.validation_errors || undefined,
     });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 };
 
@@ -936,6 +1006,11 @@ exports.updateOrderStatus = async (req, res) => {
 
     let transactionResult = null;
     const shouldFulfill = nextStatus === 'accepted';
+    if (shouldFulfill && order.payment_method_id && order.payment_status !== 'paid' && !order.payment_proof_url) {
+      return res.status(400).json({
+        message: 'Bukti pembayaran belum dikirim pelanggan. Tunggu upload bukti pembayaran sebelum pesanan diterima.',
+      });
+    }
     if (shouldFulfill && !order.transaction_id) {
       transactionResult = await resolveFulfillmentTransaction({
         order,
@@ -955,6 +1030,9 @@ exports.updateOrderStatus = async (req, res) => {
     if (nextStatus === 'accepted') {
       updates.push('accepted_by = ?', 'accepted_at = NOW()');
       params.push(req.user.id);
+      if (order.payment_method_id && order.payment_proof_url) {
+        updates.push("payment_status = 'paid'");
+      }
     }
 
     if (nextStatus === 'cancelled') {
