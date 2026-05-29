@@ -320,6 +320,24 @@ create table if not exists discount_redemptions (
   created_at timestamptz default now()
 );
 
+create table if not exists payment_methods (
+  id bigserial primary key,
+  method_key varchar(40) unique not null,
+  name varchar(120) not null,
+  type varchar(30) not null default 'qris',
+  provider_name varchar(120) null,
+  account_name varchar(120) null,
+  account_number varchar(120) null,
+  qr_image_url text null,
+  instructions text null,
+  payment_timeout_minutes integer not null default 15,
+  status varchar(20) not null default 'active',
+  sort_order integer not null default 0,
+  created_by bigint null references users(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 alter table users add column if not exists default_branch_id bigint null references branches(id) on delete set null;
 alter table dining_tables add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table customer_orders add column if not exists branch_id bigint null references branches(id) on delete set null;
@@ -329,6 +347,13 @@ alter table customer_orders add column if not exists cancelled_at timestamptz nu
 alter table customer_orders add column if not exists discount_label varchar(160) null;
 alter table customer_orders add column if not exists discount_program_id bigint null references discount_programs(id) on delete set null;
 alter table customer_orders add column if not exists voucher_code varchar(80) null;
+alter table customer_orders add column if not exists payment_method_id bigint null references payment_methods(id) on delete set null;
+alter table customer_orders add column if not exists payment_method_key varchar(40) null;
+alter table customer_orders add column if not exists payment_method_name varchar(120) null;
+alter table customer_orders add column if not exists payment_due_at timestamptz null;
+alter table customer_orders add column if not exists payment_proof_url text null;
+alter table customer_orders add column if not exists payment_proof_note text null;
+alter table customer_orders add column if not exists payment_submitted_at timestamptz null;
 alter table discount_programs add column if not exists start_at timestamptz null;
 alter table discount_programs add column if not exists end_at timestamptz null;
 alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
@@ -402,6 +427,8 @@ create index if not exists idx_discount_redemptions_phone on discount_redemption
 create index if not exists idx_discount_redemptions_transaction on discount_redemptions(transaction_id);
 create index if not exists idx_discount_redemptions_order on discount_redemptions(order_id);
 create index if not exists idx_discount_redemptions_program_created_at on discount_redemptions(program_id, created_at desc);
+create index if not exists idx_payment_methods_status_sort on payment_methods(status, sort_order, id);
+create index if not exists idx_customer_orders_payment_due on customer_orders(payment_due_at);
 
 create or replace function set_updated_at()
 returns trigger as $$
@@ -436,6 +463,11 @@ create trigger set_discount_programs_updated_at
 before update on discount_programs
 for each row execute function set_updated_at();
 
+drop trigger if exists set_payment_methods_updated_at on payment_methods;
+create trigger set_payment_methods_updated_at
+before update on payment_methods
+for each row execute function set_updated_at();
+
 insert into dining_tables (table_number, table_name, capacity, qr_token, status)
 select
   lpad(gs::text, 2, '0'),
@@ -459,3 +491,10 @@ select
   'Reward Review Pelanggan', 'review_reward', 'percent', 5, 1, 1, 1, 'active',
   'Diskon otomatis setelah pelanggan memberi rating pelayanan dan menu pesanan.'
 where not exists (select 1 from discount_programs where type = 'review_reward');
+
+insert into payment_methods
+  (method_key, name, type, provider_name, account_name, account_number, instructions, payment_timeout_minutes, sort_order, status)
+values
+  ('qris', 'QRIS', 'qris', 'QRIS', 'Sultan Kebab', null, 'Scan QRIS, pastikan nominal sesuai total bayar, lalu upload bukti pembayaran.', 15, 1, 'active'),
+  ('transfer', 'Transfer Bank', 'transfer', 'Bank', 'Sultan Kebab', '0000000000', 'Transfer sesuai total bayar, gunakan nama pelanggan sebagai berita transfer, lalu upload bukti pembayaran.', 15, 2, 'active')
+on conflict (method_key) do nothing;

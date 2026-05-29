@@ -11,6 +11,12 @@ const {
   recordRedemption,
   validateProgramUsage,
 } = require('../services/discountService');
+const {
+  buildPaymentOrderFields,
+  ensurePaymentTables,
+  getPaymentMethodById,
+  uploadPaymentAsset,
+} = require('../services/paymentService');
 
 const VALID_ORDER_STATUSES = ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
 const STAFF_ORDER_STATUSES = ['accepted', 'preparing', 'ready', 'completed', 'cancelled'];
@@ -65,6 +71,9 @@ const attachOrderDetails = async (order) => {
     WHERE dr.order_id = ?
     ORDER BY dr.id ASC
   `, [order.id]);
+  const [paymentMethods] = order.payment_method_id
+    ? await db.query('SELECT * FROM payment_methods WHERE id = ? LIMIT 1', [order.payment_method_id])
+    : [[]];
 
   const reviewByItemId = itemReviews.reduce((acc, review) => {
     acc[review.order_item_id] = review;
@@ -74,6 +83,11 @@ const attachOrderDetails = async (order) => {
   return {
     ...order,
     discount_bundle_items: parseBundleItems(order.discount_bundle_product_ids),
+    payment_method: paymentMethods[0] || (order.payment_method_key ? {
+      id: order.payment_method_id,
+      method_key: order.payment_method_key,
+      name: order.payment_method_name,
+    } : null),
     discount_breakdown: discountBreakdown.map((item) => ({
       ...item,
       discount_value: Number(item.discount_value || 0),
@@ -377,7 +391,8 @@ exports.getPublicMenu = async (req, res) => {
 exports.createOrder = async (req, res) => {
   const conn = await db.getConnection();
   try {
-    const { table_token, customer_name, customer_phone, note, items, voucher_code } = req.body;
+    await ensurePaymentTables();
+    const { table_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
 
     if (!table_token) return res.status(400).json({ message: 'Token meja wajib diisi' });
     if (!Array.isArray(items) || items.length === 0) {
@@ -450,12 +465,23 @@ exports.createOrder = async (req, res) => {
     });
     const discountAmount = Number(discount?.discount_amount || 0);
     const finalTotal = toMoney(subtotal - discountAmount);
+    const paymentMethod = payment_method_id
+      ? await getPaymentMethodById(payment_method_id, { activeOnly: true })
+      : null;
+    if (payment_method_id && !paymentMethod) {
+      const err = new Error('Metode pembayaran tidak tersedia');
+      err.status_code = 400;
+      throw err;
+    }
+    const paymentFields = buildPaymentOrderFields(paymentMethod);
     const orderCode = makeOrderCode();
+    const paymentDueSql = paymentFields.paymentDueAtSql || 'NULL';
     const [orderResult] = await conn.query(`
       INSERT INTO customer_orders
         (order_code, table_id, branch_id, customer_name, customer_phone, subtotal, discount_rate,
-         discount_amount, final_total, discount_label, discount_program_id, voucher_code, note)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         discount_amount, final_total, discount_label, discount_program_id, voucher_code, note,
+         payment_method_id, payment_method_key, payment_method_name, payment_due_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${paymentDueSql})
     `, [
       orderCode,
       tables[0].id,
@@ -470,6 +496,9 @@ exports.createOrder = async (req, res) => {
       discount?.program?.id || null,
       discount?.voucher_code || null,
       note ? String(note).trim() : null,
+      paymentFields.paymentMethodId,
+      paymentFields.paymentMethodKey,
+      paymentFields.paymentMethodName,
     ]);
 
     const orderId = orderResult.insertId;
@@ -518,6 +547,48 @@ exports.getOrderByCode = async (req, res) => {
     res.json(await attachOrderDetails(order));
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.submitPaymentProof = async (req, res) => {
+  try {
+    await ensurePaymentTables();
+    if (!req.file) return res.status(400).json({ message: 'Bukti pembayaran wajib dilampirkan' });
+
+    const order = await getOrderRowByCode(req.params.orderCode);
+    if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
+    if (order.payment_status === 'paid') return res.status(400).json({ message: 'Pesanan sudah dibayar' });
+
+    if (order.payment_due_at && new Date(order.payment_due_at).getTime() < Date.now()) {
+      return res.status(400).json({ message: 'Batas waktu pembayaran sudah berakhir. Silakan hubungi kasir.' });
+    }
+
+    const proofUrl = await uploadPaymentAsset({
+      file: req.file,
+      folder: 'payments',
+      prefix: `proof-${order.order_code}`,
+    });
+
+    await db.query(`
+      UPDATE customer_orders
+      SET payment_proof_url = ?,
+          payment_proof_note = ?,
+          payment_submitted_at = NOW()
+      WHERE id = ?
+    `, [
+      proofUrl,
+      req.body.note ? String(req.body.note).trim() : null,
+      order.id,
+    ]);
+
+    const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
+    res.json({
+      message: 'Bukti pembayaran berhasil dikirim. Kasir akan melakukan konfirmasi.',
+      data: updated,
+    });
+  } catch (_) {
+    res.status(500).json({ message: 'Gagal mengirim bukti pembayaran' });
   }
 };
 

@@ -45,6 +45,7 @@ app.use('/api/stock-requests', require('./routes/stockRequests'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/branches', require('./routes/branches'));
 app.use('/api/discounts', require('./routes/discounts'));
+app.use('/api/payments', require('./routes/payments'));
 app.use('/api/ai-chat', require('./routes/aiChat'));
 app.use('/api/ai', require('./routes/aiData'));
 app.use('/api/customer', require('./routes/customerOrders'));
