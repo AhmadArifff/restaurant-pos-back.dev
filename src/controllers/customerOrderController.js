@@ -357,25 +357,34 @@ exports.getPublicTableByToken = async (req, res) => {
         dt.branch_id,
         b.name AS branch_name,
         b.area AS branch_area,
-        b.address AS branch_address,
-        COUNT(co.id) AS active_orders
+        b.address AS branch_address
       FROM dining_tables dt
       LEFT JOIN branches b ON b.id = dt.branch_id
-      LEFT JOIN customer_orders co ON co.table_id = dt.id
-        AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
       WHERE dt.qr_token = ? AND dt.status = 'active'
-      GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, b.area, b.address
       LIMIT 1
     `, [req.params.token]);
 
     if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
+    let activeOrders = 0;
+    try {
+      const [orderRows] = await db.query(`
+        SELECT COUNT(id) AS active_orders
+        FROM customer_orders
+        WHERE table_id = ?
+          AND status IN ('pending', 'accepted', 'preparing', 'ready')
+      `, [rows[0].id]);
+      activeOrders = Number(orderRows[0]?.active_orders || 0);
+    } catch (_) {
+      activeOrders = 0;
+    }
+
     res.json({
       ...rows[0],
-      active_orders: Number(rows[0].active_orders || 0),
-      is_available: Number(rows[0].active_orders || 0) === 0,
+      active_orders: activeOrders,
+      is_available: activeOrders === 0,
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+  } catch (_) {
+    res.status(500).json({ message: 'Gagal mengambil data meja' });
   }
 };
 
