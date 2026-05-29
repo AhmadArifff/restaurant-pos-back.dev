@@ -215,10 +215,10 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
       throw err;
     }
     candidates.push(voucher);
-  } else {
-    const bundles = await getActivePrograms(executor, 'bundle');
-    candidates.push(...bundles.filter((program) => cartHasBundle(items, program.bundle_items)));
   }
+
+  const bundles = await getActivePrograms(executor, 'bundle');
+  candidates.push(...bundles.filter((program) => cartHasBundle(items, program.bundle_items)));
 
   let best = null;
   for (const program of candidates) {
@@ -226,7 +226,7 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
     if (discountBase < Number(program.min_order_amount || 0)) continue;
     const usage = await validateProgramUsage(executor, program, customerPhone);
     if (!usage.valid) {
-      if (normalizedCode) {
+      if (normalizedCode && program.type === 'voucher') {
         const err = new Error(usage.message);
         err.status_code = 400;
         throw err;
