@@ -10,19 +10,49 @@ const toMoney = (value) => Number(Number(value || 0).toFixed(2));
 
 const parseBundleIds = (value) => {
   if (!value) return [];
-  if (Array.isArray(value)) return value.map(Number).filter(Boolean);
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => Number(item?.product_id || item?.id || item)).filter(Boolean))];
+  }
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map(Number).filter(Boolean) : [];
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.map((item) => Number(item?.product_id || item?.id || item)).filter(Boolean))]
+      : [];
   } catch (_) {
-    return String(value)
+    return [...new Set(String(value)
       .split(',')
       .map((item) => Number(String(item).trim()))
-      .filter(Boolean);
+      .filter(Boolean))];
   }
 };
 
-const serializeBundleIds = (ids) => JSON.stringify((Array.isArray(ids) ? ids : []).map(Number).filter(Boolean));
+const parseBundleItems = (value) => {
+  if (!value) return [];
+  let raw = value;
+  if (!Array.isArray(raw)) {
+    try {
+      raw = JSON.parse(value);
+    } catch (_) {
+      raw = String(value).split(',').map((item) => item.trim());
+    }
+  }
+
+  if (!Array.isArray(raw)) return [];
+  const byProduct = new Map();
+  raw.forEach((item) => {
+    const productId = Number(item?.product_id || item?.id || item);
+    if (!productId) return;
+    const qty = Math.max(1, Number(item?.qty || item?.min_qty || 1));
+    const previous = byProduct.get(productId);
+    byProduct.set(productId, {
+      product_id: productId,
+      qty: previous ? Math.max(Number(previous.qty || 1), qty) : qty,
+    });
+  });
+  return [...byProduct.values()];
+};
+
+const serializeBundleIds = (ids) => JSON.stringify(parseBundleItems(ids));
 
 const normalizeProgram = (program) => {
   if (!program) return null;
@@ -34,6 +64,7 @@ const normalizeProgram = (program) => {
     total_usage_limit: program.total_usage_limit == null ? null : Number(program.total_usage_limit || 0),
     min_service_rating: Number(program.min_service_rating || 1),
     min_menu_rating: Number(program.min_menu_rating || 1),
+    bundle_items: parseBundleItems(program.bundle_product_ids),
     bundle_product_ids: parseBundleIds(program.bundle_product_ids),
   };
 };
@@ -137,10 +168,15 @@ const validateProgramUsage = async (executor, program, customerPhone = '') => {
   return { valid: true, normalizedPhone, remaining_for_phone: normalizedPhone ? Math.max(0, Number(program.usage_limit_per_phone || 0) - counts.phone) : null };
 };
 
-const cartHasBundle = (items, bundleIds) => {
-  if (!bundleIds.length) return false;
-  const cartProductIds = new Set((items || []).map((item) => Number(item.product_id || item.id)).filter(Boolean));
-  return bundleIds.every((id) => cartProductIds.has(Number(id)));
+const cartHasBundle = (items, bundleItems) => {
+  if (!bundleItems.length) return false;
+  const cartQtyByProduct = new Map();
+  (items || []).forEach((item) => {
+    const productId = Number(item.product_id || item.id);
+    if (!productId) return;
+    cartQtyByProduct.set(productId, Number(cartQtyByProduct.get(productId) || 0) + Number(item.qty || 0));
+  });
+  return bundleItems.every((item) => Number(cartQtyByProduct.get(Number(item.product_id)) || 0) >= Number(item.qty || 1));
 };
 
 const getItemSubtotal = (item) => {
@@ -152,7 +188,7 @@ const getItemSubtotal = (item) => {
 
 const getProgramDiscountBase = (subtotal, items, program) => {
   if (program?.type !== 'bundle') return toMoney(subtotal);
-  const bundleIds = new Set((program.bundle_product_ids || []).map(Number).filter(Boolean));
+  const bundleIds = new Set((program.bundle_items || []).map((item) => Number(item.product_id)).filter(Boolean));
   const bundleSubtotal = (items || []).reduce((sum, item) => {
     const productId = Number(item.product_id || item.id);
     return bundleIds.has(productId) ? sum + getItemSubtotal(item) : sum;
@@ -181,7 +217,7 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
     candidates.push(voucher);
   } else {
     const bundles = await getActivePrograms(executor, 'bundle');
-    candidates.push(...bundles.filter((program) => cartHasBundle(items, program.bundle_product_ids)));
+    candidates.push(...bundles.filter((program) => cartHasBundle(items, program.bundle_items)));
   }
 
   let best = null;
@@ -252,6 +288,7 @@ module.exports = {
   getReviewProgram,
   normalizePhone,
   normalizeProgram,
+  parseBundleItems,
   parseBundleIds,
   recordRedemption,
   serializeBundleIds,

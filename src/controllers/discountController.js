@@ -3,7 +3,7 @@ const {
   findBestDiscount,
   getActivePrograms,
   normalizeProgram,
-  parseBundleIds,
+  parseBundleItems,
   serializeBundleIds,
 } = require('../services/discountService');
 
@@ -60,7 +60,11 @@ const toProgramPayload = (body = {}) => {
       : Math.max(0, Number(body.total_usage_limit || 0)),
     min_service_rating: Math.min(5, Math.max(1, Number(body.min_service_rating || 1))),
     min_menu_rating: Math.min(5, Math.max(1, Number(body.min_menu_rating || 1))),
-    bundle_product_ids: serializeBundleIds(parseBundleIds(body.bundle_product_ids)),
+    bundle_product_ids: serializeBundleIds(
+      type === 'bundle'
+        ? (body.bundle_items || body.bundle_product_ids)
+        : []
+    ),
     status: body.status === 'inactive' ? 'inactive' : 'active',
     start_at: startAt,
     end_at: endAt,
@@ -187,7 +191,7 @@ exports.create = async (req, res) => {
     const payload = toProgramPayload(req.body);
     if (!payload.name) return res.status(400).json({ message: 'Nama program wajib diisi' });
     if (payload.type === 'voucher' && !payload.code) return res.status(400).json({ message: 'Kode voucher wajib diisi' });
-    if (payload.type === 'bundle' && !parseBundleIds(payload.bundle_product_ids).length) {
+    if (payload.type === 'bundle' && !parseBundleItems(payload.bundle_product_ids).length) {
       return res.status(400).json({ message: 'Paket bundle wajib memiliki minimal satu menu' });
     }
     const dateError = validateDateRange(payload);
@@ -233,6 +237,9 @@ exports.update = async (req, res) => {
     const payload = toProgramPayload(req.body);
     if (!payload.name) return res.status(400).json({ message: 'Nama program wajib diisi' });
     if (payload.type === 'voucher' && !payload.code) return res.status(400).json({ message: 'Kode voucher wajib diisi' });
+    if (payload.type === 'bundle' && !parseBundleItems(payload.bundle_product_ids).length) {
+      return res.status(400).json({ message: 'Paket bundle wajib memiliki minimal satu menu' });
+    }
     const dateError = validateDateRange(payload);
     if (dateError) return res.status(400).json({ message: dateError });
 
@@ -275,6 +282,11 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   try {
+    if (String(req.query.hard || '') === '1') {
+      const [result] = await db.query('DELETE FROM discount_programs WHERE id = ?', [req.params.id]);
+      if (!result.affectedRows) return res.status(404).json({ message: 'Program diskon tidak ditemukan' });
+      return res.json({ message: 'Program voucher dan diskon berhasil dihapus' });
+    }
     const [result] = await db.query("UPDATE discount_programs SET status = 'inactive' WHERE id = ?", [req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ message: 'Program diskon tidak ditemukan' });
     res.json({ message: 'Program voucher dan diskon berhasil dinonaktifkan' });
