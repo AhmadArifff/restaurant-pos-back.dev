@@ -27,11 +27,61 @@ const NEXT_STATUS_BY_CURRENT = {
   ready: 'completed',
 };
 const REVIEW_DISCOUNT_RATE = 5;
+const PAYMENT_EXPIRED_REASON = 'Pesanan otomatis dibatalkan oleh sistem karena batas waktu pembayaran sudah habis.';
 
 const makeToken = () => crypto.randomBytes(24).toString('hex');
 const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
 const toMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+const expireOverduePaymentOrders = async (executor = db, { orderId = null, tableId = null, branchId = null } = {}) => {
+  const params = [];
+  let where = `
+    WHERE status = 'pending'
+      AND payment_method_id IS NOT NULL
+      AND payment_status = 'unpaid'
+      AND payment_proof_url IS NULL
+      AND payment_due_at IS NOT NULL
+      AND payment_due_at <= NOW()
+  `;
+
+  if (orderId) {
+    where += ' AND id = ?';
+    params.push(orderId);
+  }
+  if (tableId) {
+    where += ' AND table_id = ?';
+    params.push(tableId);
+  }
+  if (branchId) {
+    where += ' AND branch_id = ?';
+    params.push(branchId);
+  }
+
+  const [expiredOrders] = await executor.query(
+    `SELECT id FROM customer_orders ${where}`,
+    params
+  );
+  const expiredIds = expiredOrders.map((order) => Number(order.id)).filter(Boolean);
+  if (!expiredIds.length) return { expiredCount: 0, expiredIds: [] };
+
+  const placeholders = expiredIds.map(() => '?').join(',');
+  await executor.query(`
+    UPDATE customer_orders
+    SET status = 'cancelled',
+        cancel_reason = ?,
+        cancelled_by = NULL,
+        cancelled_at = NOW()
+    WHERE id IN (${placeholders})
+  `, [PAYMENT_EXPIRED_REASON, ...expiredIds]);
+
+  await executor.query(
+    `DELETE FROM discount_redemptions WHERE order_id IN (${placeholders})`,
+    expiredIds
+  );
+
+  return { expiredCount: expiredIds.length, expiredIds };
+};
 
 const normalizeTablePayload = (body) => ({
   table_number: String(body.table_number || '').trim(),
@@ -347,6 +397,7 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 exports.listPublicTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req);
+    await expireOverduePaymentOrders(db, { branchId });
     const branchWhere = branchId ? 'AND dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
     const orderBy = db.isPostgres
@@ -405,6 +456,7 @@ exports.getPublicTableByToken = async (req, res) => {
     `, [req.params.token]);
 
     if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
+    await expireOverduePaymentOrders(db, { tableId: rows[0].id });
     let activeOrders = 0;
     try {
       const [orderRows] = await db.query(`
@@ -456,6 +508,7 @@ exports.createOrder = async (req, res) => {
     if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau tidak aktif' });
 
     await conn.beginTransaction();
+    await expireOverduePaymentOrders(conn, { tableId: tables[0].id });
 
     const [activeOrders] = await conn.query(`
       SELECT id, order_code
@@ -621,8 +674,10 @@ exports.createOrder = async (req, res) => {
 
 exports.getOrderByCode = async (req, res) => {
   try {
-    const order = await getOrderRowByCode(req.params.orderCode);
+    let order = await getOrderRowByCode(req.params.orderCode);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    await expireOverduePaymentOrders(db, { orderId: order.id });
+    order = await getOrderRowByCode(req.params.orderCode);
     res.json(await attachOrderDetails(order));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -636,6 +691,10 @@ exports.submitPaymentProof = async (req, res) => {
 
     const order = await getOrderRowByCode(req.params.orderCode);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    const expired = await expireOverduePaymentOrders(db, { orderId: order.id });
+    if (expired.expiredCount > 0) {
+      return res.status(400).json({ message: 'Batas waktu pembayaran sudah berakhir dan pesanan otomatis dibatalkan.' });
+    }
     if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
     if (order.payment_status === 'paid') return res.status(400).json({ message: 'Pesanan sudah dibayar' });
 
@@ -827,6 +886,7 @@ exports.submitReview = async (req, res) => {
 exports.listManagedTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    await expireOverduePaymentOrders(db, { branchId });
     const branchWhere = branchId ? 'WHERE dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
     const [rows] = await db.query(`
@@ -933,6 +993,7 @@ exports.listOrders = async (req, res) => {
   try {
     const { status, limit = 80 } = req.query;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    await expireOverduePaymentOrders(db, { branchId });
     const params = [];
     let where = 'WHERE 1=1';
 
@@ -989,6 +1050,10 @@ exports.updateOrderStatus = async (req, res) => {
     `, [req.params.id]);
     const order = orderRows[0] || null;
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    const expired = await expireOverduePaymentOrders(conn, { orderId: order.id });
+    if (expired.expiredCount > 0) {
+      return res.status(400).json({ message: 'Batas waktu pembayaran sudah habis dan pesanan otomatis dibatalkan.' });
+    }
     if (order.status === 'cancelled') return res.status(400).json({ message: 'Pesanan sudah dibatalkan' });
     if (order.status === 'completed') return res.status(400).json({ message: 'Pesanan sudah selesai' });
 
