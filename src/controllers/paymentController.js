@@ -128,9 +128,15 @@ exports.deleteMethod = async (req, res) => {
     const existing = await getPaymentMethodById(req.params.id, { activeOnly: false });
     if (!existing) return sendSafeError(res, 404, 'Metode pembayaran tidak ditemukan');
 
+    if (String(req.query.hard || '') === '1') {
+      await removePaymentAsset(existing.qr_image_url);
+      await db.query('DELETE FROM payment_methods WHERE id = ?', [req.params.id]);
+      return res.json({ message: 'Metode pembayaran berhasil dihapus' });
+    }
+
     await db.query("UPDATE payment_methods SET status = 'inactive' WHERE id = ?", [req.params.id]);
     res.json({ message: 'Metode pembayaran dinonaktifkan' });
   } catch (_) {
-    sendSafeError(res, 500, 'Gagal menonaktifkan metode pembayaran');
+    sendSafeError(res, 500, 'Gagal menghapus metode pembayaran');
   }
 };
