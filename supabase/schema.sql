@@ -339,6 +339,31 @@ create table if not exists payment_methods (
   updated_at timestamptz default now()
 );
 
+create table if not exists customer_table_sessions (
+  id bigserial primary key,
+  table_id bigint not null references dining_tables(id) on delete cascade,
+  branch_id bigint null references branches(id) on delete set null,
+  session_token varchar(96) not null unique,
+  status varchar(24) not null default 'active',
+  expires_at timestamptz not null,
+  released_at timestamptz null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists customer_table_queue (
+  id bigserial primary key,
+  branch_id bigint null references branches(id) on delete set null,
+  table_id bigint null references dining_tables(id) on delete set null,
+  queue_token varchar(96) not null unique,
+  customer_name varchar(120) null,
+  preference varchar(24) not null default 'random',
+  status varchar(24) not null default 'waiting',
+  called_session_token varchar(96) null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 alter table users add column if not exists default_branch_id bigint null references branches(id) on delete set null;
 alter table dining_tables add column if not exists branch_id bigint null references branches(id) on delete set null;
 alter table customer_orders add column if not exists branch_id bigint null references branches(id) on delete set null;
@@ -432,6 +457,8 @@ create index if not exists idx_discount_redemptions_program_created_at on discou
 create index if not exists idx_payment_methods_status_sort on payment_methods(status, sort_order, id);
 create index if not exists idx_customer_orders_payment_due on customer_orders(payment_due_at);
 create index if not exists idx_customer_orders_review_hold on customer_orders(table_id, status, completed_at, reviewed_at, review_skipped_at);
+create index if not exists idx_customer_table_sessions_active on customer_table_sessions(table_id, status, expires_at);
+create index if not exists idx_customer_table_queue_waiting on customer_table_queue(branch_id, status, created_at);
 
 create or replace function set_updated_at()
 returns trigger as $$

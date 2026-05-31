@@ -4,10 +4,15 @@ const { authenticate, isAdmin } = require('../middleware/auth');
 const paymentUpload = require('../middleware/paymentUpload');
 
 router.get('/tables', c.listPublicTables);
+router.get('/tables/queue', c.getTableQueue);
+router.post('/tables/queue', c.joinTableQueue);
+router.post('/tables/queue/:queueToken/claim', c.claimTableQueue);
 router.get('/tables/manage', authenticate, isAdmin, c.listManagedTables);
 router.post('/tables', authenticate, isAdmin, c.createTable);
 router.put('/tables/:id', authenticate, isAdmin, c.updateTable);
 router.delete('/tables/:id', authenticate, isAdmin, c.deleteTable);
+router.post('/tables/session/:sessionToken/release', c.releaseTableSession);
+router.post('/tables/:token/session', c.createOrRenewTableSession);
 router.get('/tables/:token', c.getPublicTableByToken);
 
 router.get('/menu', c.getPublicMenu);

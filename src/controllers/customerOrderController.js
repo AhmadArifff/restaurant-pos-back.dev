@@ -28,6 +28,7 @@ const NEXT_STATUS_BY_CURRENT = {
 };
 const REVIEW_DISCOUNT_RATE = 5;
 const PAYMENT_EXPIRED_REASON = 'Pesanan otomatis dibatalkan oleh sistem karena batas waktu pembayaran sudah habis.';
+const TABLE_SESSION_HOLD_MINUTES = 30;
 const REVIEW_PROMPT_HOLD_MINUTES = 60;
 const POST_REVIEW_HOLD_MINUTES = 20;
 
@@ -35,6 +36,8 @@ const makeToken = () => crypto.randomBytes(24).toString('hex');
 const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
 const toMoney = (value) => Number(Number(value || 0).toFixed(2));
+const addMinutesSql = (minutes) => db.isPostgres ? `NOW() + INTERVAL '${minutes} minutes'` : `DATE_ADD(NOW(), INTERVAL ${minutes} MINUTE)`;
+const nowSql = () => 'NOW()';
 
 let ensureReviewHoldColumnPromise = null;
 const ensureReviewHoldColumn = async () => {
@@ -81,6 +84,164 @@ const buildActiveTableOrderCondition = (alias = 'co') => {
       )
     )
   )`;
+};
+
+let ensureTableSlotTablesPromise = null;
+const ensureTableSlotTables = async () => {
+  if (!ensureTableSlotTablesPromise) {
+    ensureTableSlotTablesPromise = (async () => {
+      if (db.isPostgres) {
+        await db.query(`
+          CREATE TABLE IF NOT EXISTS customer_table_sessions (
+            id BIGSERIAL PRIMARY KEY,
+            table_id BIGINT NOT NULL REFERENCES dining_tables(id) ON DELETE CASCADE,
+            branch_id BIGINT NULL REFERENCES branches(id) ON DELETE SET NULL,
+            session_token VARCHAR(96) NOT NULL UNIQUE,
+            status VARCHAR(24) NOT NULL DEFAULT 'active',
+            expires_at TIMESTAMPTZ NOT NULL,
+            released_at TIMESTAMPTZ NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+        await db.query(`
+          CREATE TABLE IF NOT EXISTS customer_table_queue (
+            id BIGSERIAL PRIMARY KEY,
+            branch_id BIGINT NULL REFERENCES branches(id) ON DELETE SET NULL,
+            table_id BIGINT NULL REFERENCES dining_tables(id) ON DELETE SET NULL,
+            queue_token VARCHAR(96) NOT NULL UNIQUE,
+            customer_name VARCHAR(120) NULL,
+            preference VARCHAR(24) NOT NULL DEFAULT 'random',
+            status VARCHAR(24) NOT NULL DEFAULT 'waiting',
+            called_session_token VARCHAR(96) NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+          )
+        `);
+        await db.query('CREATE INDEX IF NOT EXISTS idx_customer_table_sessions_active ON customer_table_sessions(table_id, status, expires_at)');
+        await db.query('CREATE INDEX IF NOT EXISTS idx_customer_table_queue_waiting ON customer_table_queue(branch_id, status, created_at)');
+        return;
+      }
+
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS customer_table_sessions (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          table_id INT NOT NULL,
+          branch_id INT NULL,
+          session_token VARCHAR(96) NOT NULL UNIQUE,
+          status VARCHAR(24) NOT NULL DEFAULT 'active',
+          expires_at DATETIME NOT NULL,
+          released_at DATETIME NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_customer_table_sessions_active (table_id, status, expires_at)
+        )
+      `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS customer_table_queue (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          branch_id INT NULL,
+          table_id INT NULL,
+          queue_token VARCHAR(96) NOT NULL UNIQUE,
+          customer_name VARCHAR(120) NULL,
+          preference VARCHAR(24) NOT NULL DEFAULT 'random',
+          status VARCHAR(24) NOT NULL DEFAULT 'waiting',
+          called_session_token VARCHAR(96) NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_customer_table_queue_waiting (branch_id, status, created_at)
+        )
+      `);
+    })().catch((err) => {
+      ensureTableSlotTablesPromise = null;
+      throw err;
+    });
+  }
+  return ensureTableSlotTablesPromise;
+};
+
+const expireTableSessions = async (executor = db) => {
+  await ensureTableSlotTables();
+  await executor.query(`UPDATE customer_table_sessions SET status = 'expired' WHERE status = 'active' AND expires_at <= ${nowSql()}`);
+};
+
+const getActiveSessionCount = async (tableId, exceptSessionToken = '') => {
+  const params = [tableId];
+  let except = '';
+  if (exceptSessionToken) {
+    except = 'AND session_token <> ?';
+    params.push(exceptSessionToken);
+  }
+  const [rows] = await db.query(`
+    SELECT COUNT(id) AS total
+    FROM customer_table_sessions
+    WHERE table_id = ?
+      AND status = 'active'
+      AND expires_at > ${nowSql()}
+      ${except}
+  `, params);
+  return Number(rows[0]?.total || 0);
+};
+
+const getActiveOrderCount = async (tableId) => {
+  const [rows] = await db.query(`
+    SELECT COUNT(id) AS total
+    FROM customer_orders
+    WHERE table_id = ?
+      AND ${buildActiveTableOrderCondition('')}
+  `, [tableId]);
+  return Number(rows[0]?.total || 0);
+};
+
+const getWaitingQueueCount = async (branchId = null) => {
+  const params = [];
+  const branchWhere = branchId ? 'AND branch_id = ?' : '';
+  if (branchId) params.push(branchId);
+  const [rows] = await db.query(`
+    SELECT COUNT(id) AS total
+    FROM customer_table_queue
+    WHERE status = 'waiting'
+      ${branchWhere}
+  `, params);
+  return Number(rows[0]?.total || 0);
+};
+
+const estimateReleaseAt = (row) => {
+  const sessionExpiry = row.active_session_expires_at ? new Date(row.active_session_expires_at).getTime() : 0;
+  const completedAt = row.active_order_completed_at ? new Date(row.active_order_completed_at).getTime() : 0;
+  const reviewedAt = row.active_order_reviewed_at ? new Date(row.active_order_reviewed_at).getTime() : 0;
+  const skippedAt = row.active_order_review_skipped_at ? new Date(row.active_order_review_skipped_at).getTime() : 0;
+  const createdAt = row.active_order_created_at ? new Date(row.active_order_created_at).getTime() : 0;
+  const candidates = [sessionExpiry].filter(Boolean);
+  if (reviewedAt) candidates.push(reviewedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000);
+  if (skippedAt) candidates.push(skippedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000);
+  if (completedAt && !reviewedAt && !skippedAt) candidates.push(completedAt + (REVIEW_PROMPT_HOLD_MINUTES + POST_REVIEW_HOLD_MINUTES) * 60 * 1000);
+  if (createdAt && !completedAt) candidates.push(createdAt + (REVIEW_PROMPT_HOLD_MINUTES + POST_REVIEW_HOLD_MINUTES) * 60 * 1000);
+  const max = Math.max(...candidates, 0);
+  return max ? new Date(max).toISOString() : null;
+};
+
+const findAvailableTableForQueue = async ({ branchId = null, preferredTableId = null } = {}) => {
+  await expireTableSessions();
+  const params = [];
+  let where = "WHERE dt.status = 'active'";
+  if (branchId) {
+    where += ' AND dt.branch_id = ?';
+    params.push(branchId);
+  }
+  if (preferredTableId) {
+    where += ' AND dt.id = ?';
+    params.push(preferredTableId);
+  }
+  const [tables] = await db.query(`SELECT dt.* FROM dining_tables dt ${where} ORDER BY dt.table_number ASC, dt.id ASC`, params);
+  for (const table of tables) {
+    const [orderCount, sessionCount] = await Promise.all([
+      getActiveOrderCount(table.id),
+      getActiveSessionCount(table.id),
+    ]);
+    if (orderCount === 0 && sessionCount === 0) return table;
+  }
+  return null;
 };
 
 const expireOverduePaymentOrders = async (executor = db, { orderId = null, tableId = null, branchId = null } = {}) => {
@@ -447,6 +608,8 @@ exports.listPublicTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req);
     await ensureReviewHoldColumn();
+    await ensureTableSlotTables();
+    await expireTableSessions();
     await expireOverduePaymentOrders(db, { branchId });
     const branchWhere = branchId ? 'AND dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
@@ -465,20 +628,34 @@ exports.listPublicTables = async (req, res) => {
         b.name AS branch_name,
         b.area AS branch_area,
         b.address AS branch_address,
-        COUNT(co.id) AS active_orders
+        COUNT(DISTINCT co.id) AS active_order_count,
+        COUNT(DISTINCT cts.id) AS active_session_count,
+        MAX(co.created_at) AS active_order_created_at,
+        MAX(co.completed_at) AS active_order_completed_at,
+        MAX(co.reviewed_at) AS active_order_reviewed_at,
+        MAX(co.review_skipped_at) AS active_order_review_skipped_at,
+        MAX(cts.expires_at) AS active_session_expires_at
       FROM dining_tables dt
       LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
         AND ${buildActiveTableOrderCondition('co')}
+      LEFT JOIN customer_table_sessions cts ON cts.table_id = dt.id
+        AND cts.status = 'active'
+        AND cts.expires_at > ${nowSql()}
       WHERE dt.status = 'active'
         ${branchWhere}
       GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, b.area, b.address
       ORDER BY ${orderBy}
     `, params);
+    const queueWaitingCount = await getWaitingQueueCount(branchId);
     res.json(rows.map((row) => ({
       ...row,
-      active_orders: Number(row.active_orders || 0),
-      is_available: Number(row.active_orders || 0) === 0,
+      active_order_count: Number(row.active_order_count || 0),
+      active_session_count: Number(row.active_session_count || 0),
+      active_orders: Number(row.active_order_count || 0) + Number(row.active_session_count || 0),
+      queue_waiting_count: queueWaitingCount,
+      estimated_release_at: estimateReleaseAt(row),
+      is_available: Number(row.active_order_count || 0) + Number(row.active_session_count || 0) === 0 && queueWaitingCount === 0,
     })));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -488,6 +665,8 @@ exports.listPublicTables = async (req, res) => {
 exports.getPublicTableByToken = async (req, res) => {
   try {
     await ensureReviewHoldColumn();
+    await ensureTableSlotTables();
+    await expireTableSessions();
     const [rows] = await db.query(`
       SELECT
         dt.id,
@@ -509,6 +688,7 @@ exports.getPublicTableByToken = async (req, res) => {
     if (!rows.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
     await expireOverduePaymentOrders(db, { tableId: rows[0].id });
     let activeOrders = 0;
+    let activeSessions = 0;
     try {
       const [orderRows] = await db.query(`
         SELECT COUNT(id) AS active_orders
@@ -520,11 +700,18 @@ exports.getPublicTableByToken = async (req, res) => {
     } catch (_) {
       activeOrders = 0;
     }
+    try {
+      activeSessions = await getActiveSessionCount(rows[0].id, req.query.session_token || '');
+    } catch (_) {
+      activeSessions = 0;
+    }
 
     res.json({
       ...rows[0],
-      active_orders: activeOrders,
-      is_available: activeOrders === 0,
+      active_order_count: activeOrders,
+      active_session_count: activeSessions,
+      active_orders: activeOrders + activeSessions,
+      is_available: activeOrders + activeSessions === 0,
     });
   } catch (_) {
     res.status(500).json({ message: 'Gagal mengambil data meja' });
@@ -540,12 +727,166 @@ exports.getPublicMenu = async (req, res) => {
   }
 };
 
+exports.createOrRenewTableSession = async (req, res) => {
+  try {
+    await ensureReviewHoldColumn();
+    await ensureTableSlotTables();
+    await expireTableSessions();
+    const requestedToken = req.body.session_token || '';
+    const [tables] = await db.query("SELECT * FROM dining_tables WHERE qr_token = ? AND status = 'active' LIMIT 1", [req.params.token]);
+    if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
+    const table = tables[0];
+
+    const activeOrderCount = await getActiveOrderCount(table.id);
+    if (activeOrderCount > 0) return res.status(409).json({ message: 'Meja ini sedang memiliki pesanan aktif' });
+
+    const waitingCount = await getWaitingQueueCount(table.branch_id || null);
+    if (waitingCount > 0 && !req.body.queue_token) {
+      return res.status(409).json({ message: 'Masih ada antrian pelanggan. Silakan ambil nomor antrian terlebih dahulu.' });
+    }
+
+    if (requestedToken) {
+      const [existing] = await db.query(`
+        SELECT * FROM customer_table_sessions
+        WHERE session_token = ? AND table_id = ? AND status = 'active' AND expires_at > ${nowSql()}
+        LIMIT 1
+      `, [requestedToken, table.id]);
+      if (existing.length) {
+        await db.query(`UPDATE customer_table_sessions SET expires_at = ${addMinutesSql(TABLE_SESSION_HOLD_MINUTES)} WHERE id = ?`, [existing[0].id]);
+        const [updated] = await db.query('SELECT * FROM customer_table_sessions WHERE id = ? LIMIT 1', [existing[0].id]);
+        return res.json({ message: 'Slot meja diperpanjang', data: updated[0] });
+      }
+    }
+
+    const activeSessionCount = await getActiveSessionCount(table.id, requestedToken);
+    if (activeSessionCount > 0) return res.status(409).json({ message: 'Meja ini sedang dipilih pelanggan lain' });
+
+    const sessionToken = requestedToken || crypto.randomBytes(24).toString('hex');
+    const [result] = await db.query(`
+      INSERT INTO customer_table_sessions (table_id, branch_id, session_token, status, expires_at)
+      VALUES (?, ?, ?, 'active', ${addMinutesSql(TABLE_SESSION_HOLD_MINUTES)})
+    `, [table.id, table.branch_id || null, sessionToken]);
+    const [rows] = await db.query('SELECT * FROM customer_table_sessions WHERE id = ? LIMIT 1', [result.insertId]);
+    res.status(201).json({ message: 'Slot meja aktif selama 30 menit', data: rows[0] });
+  } catch (err) {
+    res.status(err.status_code || 500).json({ message: err.message || 'Gagal membuat slot meja' });
+  }
+};
+
+exports.releaseTableSession = async (req, res) => {
+  try {
+    await ensureTableSlotTables();
+    await db.query(`UPDATE customer_table_sessions SET status = 'released', released_at = ${nowSql()} WHERE session_token = ? AND status = 'active'`, [req.params.sessionToken]);
+    res.json({ message: 'Slot meja dilepas' });
+  } catch (_) {
+    res.status(500).json({ message: 'Gagal melepas slot meja' });
+  }
+};
+
+exports.getTableQueue = async (req, res) => {
+  try {
+    await ensureTableSlotTables();
+    await expireTableSessions();
+    const branchId = getRequestBranchId(req);
+    const queueToken = req.query.queue_token || '';
+    const params = [];
+    const branchWhere = branchId ? 'AND q.branch_id = ?' : '';
+    if (branchId) params.push(branchId);
+    const [rows] = await db.query(`
+      SELECT q.*, dt.table_number
+      FROM customer_table_queue q
+      LEFT JOIN dining_tables dt ON dt.id = q.table_id
+      WHERE q.status = 'waiting'
+        ${branchWhere}
+      ORDER BY q.created_at ASC, q.id ASC
+    `, params);
+    const availableTable = await findAvailableTableForQueue({ branchId });
+    const position = queueToken ? rows.findIndex((row) => row.queue_token === queueToken) + 1 : 0;
+    res.json({
+      waiting_count: rows.length,
+      has_queue: rows.length > 0,
+      queue: rows.map((row, index) => ({ ...row, position: index + 1 })),
+      current_position: position,
+      can_claim: Boolean(queueToken && position === 1 && availableTable),
+      available_table: availableTable ? {
+        id: availableTable.id,
+        table_number: availableTable.table_number,
+      } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Gagal mengambil antrian' });
+  }
+};
+
+exports.joinTableQueue = async (req, res) => {
+  try {
+    await ensureTableSlotTables();
+    await expireTableSessions();
+    const branchId = req.body.branch_id ? Number(req.body.branch_id) : getRequestBranchId(req);
+    const tableId = req.body.table_id ? Number(req.body.table_id) : null;
+    const preference = tableId ? 'selected' : 'random';
+    const queueToken = crypto.randomBytes(24).toString('hex');
+    const [result] = await db.query(`
+      INSERT INTO customer_table_queue (branch_id, table_id, queue_token, customer_name, preference, status)
+      VALUES (?, ?, ?, ?, ?, 'waiting')
+    `, [branchId || null, tableId || null, queueToken, req.body.customer_name ? String(req.body.customer_name).trim() : null, preference]);
+    const [rows] = await db.query('SELECT * FROM customer_table_queue WHERE id = ? LIMIT 1', [result.insertId]);
+    res.status(201).json({ message: 'Anda masuk antrian meja', data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Gagal masuk antrian' });
+  }
+};
+
+exports.claimTableQueue = async (req, res) => {
+  try {
+    await ensureTableSlotTables();
+    await expireTableSessions();
+    const queueToken = req.params.queueToken;
+    const [queueRows] = await db.query("SELECT * FROM customer_table_queue WHERE queue_token = ? AND status = 'waiting' LIMIT 1", [queueToken]);
+    if (!queueRows.length) return res.status(404).json({ message: 'Antrian tidak ditemukan' });
+    const queue = queueRows[0];
+    const [firstRows] = await db.query(`
+      SELECT * FROM customer_table_queue
+      WHERE status = 'waiting' AND ${queue.branch_id ? 'branch_id = ?' : 'branch_id IS NULL'}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `, queue.branch_id ? [queue.branch_id] : []);
+    if (!firstRows.length || firstRows[0].queue_token !== queueToken) {
+      return res.status(409).json({ message: 'Belum giliran antrian Anda' });
+    }
+    const table = await findAvailableTableForQueue({ branchId: queue.branch_id || null, preferredTableId: queue.table_id || null });
+    if (!table) return res.status(409).json({ message: 'Belum ada meja kosong untuk antrian Anda' });
+    const sessionToken = crypto.randomBytes(24).toString('hex');
+    const [sessionResult] = await db.query(`
+      INSERT INTO customer_table_sessions (table_id, branch_id, session_token, status, expires_at)
+      VALUES (?, ?, ?, 'active', ${addMinutesSql(TABLE_SESSION_HOLD_MINUTES)})
+    `, [table.id, table.branch_id || null, sessionToken]);
+    await db.query("UPDATE customer_table_queue SET status = 'called', called_session_token = ? WHERE id = ?", [sessionToken, queue.id]);
+    const [sessionRows] = await db.query('SELECT * FROM customer_table_sessions WHERE id = ? LIMIT 1', [sessionResult.insertId]);
+    res.json({
+      message: 'Slot meja dari antrian berhasil diambil',
+      data: {
+        session: sessionRows[0],
+        table: {
+          ...table,
+          active_orders: 1,
+          is_available: false,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Gagal mengambil slot antrian' });
+  }
+};
+
 exports.createOrder = async (req, res) => {
   let conn;
   try {
     await ensureReviewHoldColumn();
+    await ensureTableSlotTables();
+    await expireTableSessions();
     await ensurePaymentTables();
-    const { table_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
+    const { table_token, table_session_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
 
     if (!table_token) return res.status(400).json({ message: 'Token meja wajib diisi' });
     if (!Array.isArray(items) || items.length === 0) {
@@ -558,6 +899,16 @@ exports.createOrder = async (req, res) => {
       [table_token]
     );
     if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau tidak aktif' });
+    const activeSessionCount = await getActiveSessionCount(tables[0].id, table_session_token || '');
+    if (activeSessionCount > 0) return res.status(409).json({ message: 'Meja ini sedang dipilih pelanggan lain' });
+    if (table_session_token) {
+      const [sessionRows] = await conn.query(`
+        SELECT id FROM customer_table_sessions
+        WHERE table_id = ? AND session_token = ? AND status = 'active' AND expires_at > ${nowSql()}
+        LIMIT 1
+      `, [tables[0].id, table_session_token]);
+      if (!sessionRows.length) return res.status(409).json({ message: 'Slot meja sudah habis. Silakan pilih meja ulang.' });
+    }
 
     await conn.beginTransaction();
     await expireOverduePaymentOrders(conn, { tableId: tables[0].id });
@@ -702,6 +1053,9 @@ exports.createOrder = async (req, res) => {
         discountAmount: component.discount_amount,
         voucherCode: component.voucher_code,
       });
+    }
+    if (table_session_token) {
+      await conn.query(`UPDATE customer_table_sessions SET status = 'released', released_at = ${nowSql()} WHERE session_token = ?`, [table_session_token]);
     }
 
     await conn.commit();
