@@ -254,6 +254,59 @@ module.exports = {
     }
   },
 
+  // Admin: upload reusable website content image without changing a setting row
+  uploadAsset: async (req, res) => {
+    try {
+      const { setting_key } = req.body;
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'File gambar diperlukan' });
+      }
+
+      const prefix = String(setting_key || 'content_image')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 48) || 'content_image';
+
+      let fileUrl;
+      let filename;
+
+      if (isSupabaseStorageEnabled()) {
+        const uploaded = await uploadImageBuffer({
+          folder: 'website-content',
+          prefix,
+          file: req.file,
+        });
+
+        fileUrl = uploaded.publicUrl;
+        filename = uploaded.objectPath;
+      } else {
+        const contentDir = path.join(__dirname, '../../public/images/content');
+        if (!fs.existsSync(contentDir)) {
+          fs.mkdirSync(contentDir, { recursive: true });
+        }
+
+        const ext = path.extname(req.file.originalname);
+        filename = `${prefix}-${Date.now()}${ext}`;
+        const filepath = path.join(contentDir, filename);
+        fs.writeFileSync(filepath, req.file.buffer);
+
+        fileUrl = `/images/content/${filename}`;
+      }
+
+      res.json({
+        message: 'File berhasil diunggah',
+        file_url: fileUrl,
+        setting_value: fileUrl,
+        filename,
+      });
+    } catch (err) {
+      console.error('Error uploading content asset:', err.message);
+      res.status(500).json({ error: 'Gagal mengunggah file' });
+    }
+  },
+
   // Admin: bulk update settings
   bulkUpdate: async (req, res) => {
     try {

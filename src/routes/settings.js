@@ -5,6 +5,7 @@ const settingsUpload = require('../middleware/settingsUpload');
 
 // Admin routes - HARUS DI ATAS agar tidak tertangkap :key parameter
 router.put('/bulk-update', authenticate, isAdmin, settingsController.bulkUpdate);
+router.put('/upload-asset', authenticate, isAdmin, settingsUpload.single('file'), settingsController.uploadAsset);
 router.put('/upload', authenticate, isAdmin, settingsUpload.single('file'), settingsController.updateWithFile);
 router.put('/', authenticate, isAdmin, settingsController.update);
 
