@@ -8,10 +8,90 @@ const {
 } = require('../services/supabaseStorage');
 
 const ALLOWED_DATA_TYPES = new Set(['string', 'number', 'boolean', 'json']);
+const STORAGE_PUBLIC_MARKER = '/storage/v1/object/public/';
 
 const normalizeDataType = (value) => (ALLOWED_DATA_TYPES.has(value) ? value : 'string');
 const normalizeSettingValue = (value) => (value == null ? '' : String(value));
 const isPostgres = () => Boolean(db.isPostgres);
+
+const safeJsonParse = (value) => {
+  if (typeof value !== 'string') return null;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+};
+
+const collectStorageUrls = (value, urls = new Set()) => {
+  if (!value) return urls;
+
+  if (typeof value === 'string') {
+    if (value.includes(STORAGE_PUBLIC_MARKER)) {
+      urls.add(value);
+      return urls;
+    }
+
+    const parsed = safeJsonParse(value);
+    if (parsed) collectStorageUrls(parsed, urls);
+    return urls;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStorageUrls(item, urls));
+    return urls;
+  }
+
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => collectStorageUrls(item, urls));
+  }
+
+  return urls;
+};
+
+const getUnusedSettingAssetUrls = async (nextSettingsByKey) => {
+  if (!isSupabaseStorageEnabled()) return [];
+
+  const updatedKeys = Object.keys(nextSettingsByKey);
+  if (!updatedKeys.length) return [];
+
+  const [rows] = await db.query(
+    'SELECT setting_key, setting_value FROM website_settings ORDER BY setting_key',
+  );
+
+  const oldUpdatedUrls = new Set();
+  const finalReferencedUrls = new Set();
+
+  for (const row of rows || []) {
+    const nextValue = Object.prototype.hasOwnProperty.call(nextSettingsByKey, row.setting_key)
+      ? nextSettingsByKey[row.setting_key]
+      : row.setting_value;
+
+    collectStorageUrls(nextValue, finalReferencedUrls);
+
+    if (Object.prototype.hasOwnProperty.call(nextSettingsByKey, row.setting_key)) {
+      collectStorageUrls(row.setting_value, oldUpdatedUrls);
+    }
+  }
+
+  for (const [settingKey, nextValue] of Object.entries(nextSettingsByKey)) {
+    if (!(rows || []).some((row) => row.setting_key === settingKey)) {
+      collectStorageUrls(nextValue, finalReferencedUrls);
+    }
+  }
+
+  return [...oldUpdatedUrls].filter((url) => !finalReferencedUrls.has(url));
+};
+
+const deleteSettingAssets = async (urls) => {
+  for (const url of urls || []) {
+    try {
+      await deleteByPublicUrl(url);
+    } catch (error) {
+      console.log('Warning: Could not delete stale setting asset:', error.message);
+    }
+  }
+};
 
 const upsertSetting = async ({ settingKey, settingValue, dataType = 'string', updatedBy }) => {
   const safeType = normalizeDataType(dataType);
@@ -152,13 +232,16 @@ module.exports = {
       }
 
       const updatedBy = req.user?.id || 1;
+      const safeValue = normalizeSettingValue(setting_value);
+      const staleAssetUrls = await getUnusedSettingAssetUrls({ [setting_key]: safeValue });
 
-      const { safeType, safeValue } = await upsertSetting({
+      const { safeType } = await upsertSetting({
         settingKey: setting_key,
-        settingValue: setting_value,
+        settingValue: safeValue,
         dataType: data_type,
         updatedBy,
       });
+      await deleteSettingAssets(staleAssetUrls);
 
       res.json({
         message: 'Setting berhasil disimpan',
@@ -318,6 +401,20 @@ module.exports = {
       }
 
       const updatedBy = req.user?.id || 1;
+      const nextSettingsByKey = {};
+
+      for (const setting of settings) {
+        const {
+          setting_key,
+          setting_value,
+          data_type = 'string',
+        } = setting || {};
+
+        if (!setting_key) continue;
+        nextSettingsByKey[setting_key] = normalizeSettingValue(setting_value);
+      }
+
+      const staleAssetUrls = await getUnusedSettingAssetUrls(nextSettingsByKey);
 
       for (const setting of settings) {
         const {
@@ -335,6 +432,8 @@ module.exports = {
           updatedBy,
         });
       }
+
+      await deleteSettingAssets(staleAssetUrls);
 
       res.json({ message: 'Semua setting berhasil disimpan' });
     } catch (err) {

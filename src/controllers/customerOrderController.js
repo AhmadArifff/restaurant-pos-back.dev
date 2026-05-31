@@ -15,6 +15,7 @@ const {
   buildPaymentOrderFields,
   ensurePaymentTables,
   getPaymentMethodById,
+  removePaymentAsset,
   uploadPaymentAsset,
 } = require('../services/paymentService');
 
@@ -1123,6 +1124,9 @@ exports.submitPaymentProof = async (req, res) => {
       folder: 'payments',
       prefix: `proof-${order.order_code}`,
     });
+    if (order.payment_proof_url) {
+      await removePaymentAsset(order.payment_proof_url);
+    }
 
     await db.query(`
       UPDATE customer_orders

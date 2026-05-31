@@ -3,7 +3,6 @@ const { createClient } = require('@supabase/supabase-js');
 
 const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'restaurant-pos-assets';
-const PUBLIC_URL = process.env.SUPABASE_PUBLIC_URL || process.env.SUPABASE_URL;
 
 const getSupabaseClient = () => {
   if (STORAGE_DRIVER !== 'supabase') return null;
@@ -62,7 +61,6 @@ const uploadImageBuffer = async ({ folder, file, prefix }) => {
 
 const deleteByPublicUrl = async (value) => {
   if (!value || !isSupabaseStorageEnabled()) return;
-  if (!PUBLIC_URL || !value.startsWith(PUBLIC_URL)) return;
 
   const marker = `/storage/v1/object/public/${BUCKET}/`;
   const markerIndex = value.indexOf(marker);
