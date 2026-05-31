@@ -756,6 +756,14 @@ exports.createOrRenewTableSession = async (req, res) => {
         const [updated] = await db.query('SELECT * FROM customer_table_sessions WHERE id = ? LIMIT 1', [existing[0].id]);
         return res.json({ message: 'Slot meja diperpanjang', data: updated[0] });
       }
+      const [staleRows] = await db.query(`
+        SELECT id FROM customer_table_sessions
+        WHERE session_token = ? AND table_id = ?
+        LIMIT 1
+      `, [requestedToken, table.id]);
+      if (staleRows.length) {
+        return res.status(409).json({ message: 'Slot meja sudah habis. Silakan pilih meja ulang.' });
+      }
     }
 
     const waitingCount = await getWaitingQueueCount(table.branch_id || null);
