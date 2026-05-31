@@ -740,11 +740,6 @@ exports.createOrRenewTableSession = async (req, res) => {
     const activeOrderCount = await getActiveOrderCount(table.id);
     if (activeOrderCount > 0) return res.status(409).json({ message: 'Meja ini sedang memiliki pesanan aktif' });
 
-    const waitingCount = await getWaitingQueueCount(table.branch_id || null);
-    if (waitingCount > 0 && !req.body.queue_token) {
-      return res.status(409).json({ message: 'Masih ada antrian pelanggan. Silakan ambil nomor antrian terlebih dahulu.' });
-    }
-
     if (requestedToken) {
       const [existing] = await db.query(`
         SELECT * FROM customer_table_sessions
@@ -756,6 +751,11 @@ exports.createOrRenewTableSession = async (req, res) => {
         const [updated] = await db.query('SELECT * FROM customer_table_sessions WHERE id = ? LIMIT 1', [existing[0].id]);
         return res.json({ message: 'Slot meja diperpanjang', data: updated[0] });
       }
+    }
+
+    const waitingCount = await getWaitingQueueCount(table.branch_id || null);
+    if (waitingCount > 0 && !req.body.queue_token) {
+      return res.status(409).json({ message: 'Masih ada antrian pelanggan. Silakan ambil nomor antrian terlebih dahulu.' });
     }
 
     const activeSessionCount = await getActiveSessionCount(table.id, requestedToken);
