@@ -31,6 +31,7 @@ const PAYMENT_EXPIRED_REASON = 'Pesanan otomatis dibatalkan oleh sistem karena b
 const TABLE_SESSION_HOLD_MINUTES = 30;
 const REVIEW_PROMPT_HOLD_MINUTES = 60;
 const POST_REVIEW_HOLD_MINUTES = 20;
+const COMPLETED_TABLE_HOLD_MINUTES = REVIEW_PROMPT_HOLD_MINUTES + POST_REVIEW_HOLD_MINUTES;
 
 const makeToken = () => crypto.randomBytes(24).toString('hex');
 const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
@@ -66,11 +67,14 @@ const ensureReviewHoldColumn = async () => {
 const buildActiveTableOrderCondition = (alias = 'co') => {
   const p = alias ? `${alias}.` : '';
   const reviewHoldCutoff = db.isPostgres
-    ? `NOW() - INTERVAL '${REVIEW_PROMPT_HOLD_MINUTES} minutes'`
-    : `DATE_SUB(NOW(), INTERVAL ${REVIEW_PROMPT_HOLD_MINUTES} MINUTE)`;
+    ? `NOW() - INTERVAL '${COMPLETED_TABLE_HOLD_MINUTES} minutes'`
+    : `DATE_SUB(NOW(), INTERVAL ${COMPLETED_TABLE_HOLD_MINUTES} MINUTE)`;
   const postReviewHoldCutoff = db.isPostgres
     ? `NOW() - INTERVAL '${POST_REVIEW_HOLD_MINUTES} minutes'`
     : `DATE_SUB(NOW(), INTERVAL ${POST_REVIEW_HOLD_MINUTES} MINUTE)`;
+  const completedHoldCutoff = db.isPostgres
+    ? `NOW() - INTERVAL '${COMPLETED_TABLE_HOLD_MINUTES} minutes'`
+    : `DATE_SUB(NOW(), INTERVAL ${COMPLETED_TABLE_HOLD_MINUTES} MINUTE)`;
 
   return `(
     ${p}status IN ('pending', 'accepted', 'preparing', 'ready')
@@ -79,8 +83,8 @@ const buildActiveTableOrderCondition = (alias = 'co') => {
       AND ${p}completed_at IS NOT NULL
       AND (
         (${p}reviewed_at IS NULL AND ${p}review_skipped_at IS NULL AND ${p}completed_at > ${reviewHoldCutoff})
-        OR (${p}reviewed_at IS NOT NULL AND ${p}reviewed_at > ${postReviewHoldCutoff})
-        OR (${p}review_skipped_at IS NOT NULL AND ${p}review_skipped_at > ${postReviewHoldCutoff})
+        OR (${p}reviewed_at IS NOT NULL AND ${p}reviewed_at > ${postReviewHoldCutoff} AND ${p}completed_at > ${completedHoldCutoff})
+        OR (${p}review_skipped_at IS NOT NULL AND ${p}review_skipped_at > ${postReviewHoldCutoff} AND ${p}completed_at > ${completedHoldCutoff})
       )
     )
   )`;
@@ -213,10 +217,11 @@ const estimateReleaseAt = (row) => {
   const skippedAt = row.active_order_review_skipped_at ? new Date(row.active_order_review_skipped_at).getTime() : 0;
   const createdAt = row.active_order_created_at ? new Date(row.active_order_created_at).getTime() : 0;
   const candidates = [sessionExpiry].filter(Boolean);
-  if (reviewedAt) candidates.push(reviewedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000);
-  if (skippedAt) candidates.push(skippedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000);
-  if (completedAt && !reviewedAt && !skippedAt) candidates.push(completedAt + (REVIEW_PROMPT_HOLD_MINUTES + POST_REVIEW_HOLD_MINUTES) * 60 * 1000);
-  if (createdAt && !completedAt) candidates.push(createdAt + (REVIEW_PROMPT_HOLD_MINUTES + POST_REVIEW_HOLD_MINUTES) * 60 * 1000);
+  const completedHoldExpiry = completedAt ? completedAt + COMPLETED_TABLE_HOLD_MINUTES * 60 * 1000 : 0;
+  if (reviewedAt) candidates.push(Math.min(reviewedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000, completedHoldExpiry || reviewedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000));
+  if (skippedAt) candidates.push(Math.min(skippedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000, completedHoldExpiry || skippedAt + POST_REVIEW_HOLD_MINUTES * 60 * 1000));
+  if (completedAt && !reviewedAt && !skippedAt) candidates.push(completedHoldExpiry);
+  if (createdAt && !completedAt) candidates.push(createdAt + COMPLETED_TABLE_HOLD_MINUTES * 60 * 1000);
   const max = Math.max(...candidates, 0);
   return max ? new Date(max).toISOString() : null;
 };
