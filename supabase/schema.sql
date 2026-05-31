@@ -244,6 +244,7 @@ create table if not exists customer_orders (
   transaction_id bigint null references transactions(id) on delete set null,
   note text null,
   reviewed_at timestamptz null,
+  review_skipped_at timestamptz null,
   accepted_by bigint null references users(id) on delete set null,
   accepted_at timestamptz null,
   completed_by bigint null references users(id) on delete set null,
@@ -354,6 +355,7 @@ alter table customer_orders add column if not exists payment_due_at timestamptz 
 alter table customer_orders add column if not exists payment_proof_url text null;
 alter table customer_orders add column if not exists payment_proof_note text null;
 alter table customer_orders add column if not exists payment_submitted_at timestamptz null;
+alter table customer_orders add column if not exists review_skipped_at timestamptz null;
 alter table discount_programs add column if not exists start_at timestamptz null;
 alter table discount_programs add column if not exists end_at timestamptz null;
 alter table transactions add column if not exists branch_id bigint null references branches(id) on delete set null;
@@ -429,6 +431,7 @@ create index if not exists idx_discount_redemptions_order on discount_redemption
 create index if not exists idx_discount_redemptions_program_created_at on discount_redemptions(program_id, created_at desc);
 create index if not exists idx_payment_methods_status_sort on payment_methods(status, sort_order, id);
 create index if not exists idx_customer_orders_payment_due on customer_orders(payment_due_at);
+create index if not exists idx_customer_orders_review_hold on customer_orders(table_id, status, completed_at, reviewed_at, review_skipped_at);
 
 create or replace function set_updated_at()
 returns trigger as $$

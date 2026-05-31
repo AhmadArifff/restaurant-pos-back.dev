@@ -28,11 +28,60 @@ const NEXT_STATUS_BY_CURRENT = {
 };
 const REVIEW_DISCOUNT_RATE = 5;
 const PAYMENT_EXPIRED_REASON = 'Pesanan otomatis dibatalkan oleh sistem karena batas waktu pembayaran sudah habis.';
+const REVIEW_PROMPT_HOLD_MINUTES = 60;
+const POST_REVIEW_HOLD_MINUTES = 20;
 
 const makeToken = () => crypto.randomBytes(24).toString('hex');
 const makeOrderCode = () => `ORD-${Date.now()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
 const toMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+let ensureReviewHoldColumnPromise = null;
+const ensureReviewHoldColumn = async () => {
+  if (!ensureReviewHoldColumnPromise) {
+    ensureReviewHoldColumnPromise = (async () => {
+      if (db.isPostgres) {
+        await db.query('ALTER TABLE customer_orders ADD COLUMN IF NOT EXISTS review_skipped_at TIMESTAMPTZ NULL');
+        await db.query('CREATE INDEX IF NOT EXISTS idx_customer_orders_review_hold ON customer_orders(table_id, status, completed_at, reviewed_at, review_skipped_at)');
+        return;
+      }
+
+      try {
+        await db.query('ALTER TABLE customer_orders ADD COLUMN review_skipped_at DATETIME NULL');
+      } catch (_) {}
+      try {
+        await db.query('CREATE INDEX idx_customer_orders_review_hold ON customer_orders(table_id, status, completed_at, reviewed_at, review_skipped_at)');
+      } catch (_) {}
+    })().catch((err) => {
+      ensureReviewHoldColumnPromise = null;
+      throw err;
+    });
+  }
+  return ensureReviewHoldColumnPromise;
+};
+
+const buildActiveTableOrderCondition = (alias = 'co') => {
+  const p = alias ? `${alias}.` : '';
+  const reviewHoldCutoff = db.isPostgres
+    ? `NOW() - INTERVAL '${REVIEW_PROMPT_HOLD_MINUTES} minutes'`
+    : `DATE_SUB(NOW(), INTERVAL ${REVIEW_PROMPT_HOLD_MINUTES} MINUTE)`;
+  const postReviewHoldCutoff = db.isPostgres
+    ? `NOW() - INTERVAL '${POST_REVIEW_HOLD_MINUTES} minutes'`
+    : `DATE_SUB(NOW(), INTERVAL ${POST_REVIEW_HOLD_MINUTES} MINUTE)`;
+
+  return `(
+    ${p}status IN ('pending', 'accepted', 'preparing', 'ready')
+    OR (
+      ${p}status = 'completed'
+      AND ${p}completed_at IS NOT NULL
+      AND (
+        (${p}reviewed_at IS NULL AND ${p}review_skipped_at IS NULL AND ${p}completed_at > ${reviewHoldCutoff})
+        OR (${p}reviewed_at IS NOT NULL AND ${p}reviewed_at > ${postReviewHoldCutoff})
+        OR (${p}review_skipped_at IS NOT NULL AND ${p}review_skipped_at > ${postReviewHoldCutoff})
+      )
+    )
+  )`;
+};
 
 const expireOverduePaymentOrders = async (executor = db, { orderId = null, tableId = null, branchId = null } = {}) => {
   const params = [];
@@ -397,6 +446,7 @@ const resolveFulfillmentTransaction = async ({ order, actorUserId, requestedSour
 exports.listPublicTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req);
+    await ensureReviewHoldColumn();
     await expireOverduePaymentOrders(db, { branchId });
     const branchWhere = branchId ? 'AND dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
@@ -419,7 +469,7 @@ exports.listPublicTables = async (req, res) => {
       FROM dining_tables dt
       LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
-        AND co.status IN ('pending', 'accepted', 'preparing', 'ready')
+        AND ${buildActiveTableOrderCondition('co')}
       WHERE dt.status = 'active'
         ${branchWhere}
       GROUP BY dt.id, dt.table_number, dt.table_name, dt.capacity, dt.qr_token, dt.status, dt.branch_id, b.name, b.area, b.address
@@ -437,6 +487,7 @@ exports.listPublicTables = async (req, res) => {
 
 exports.getPublicTableByToken = async (req, res) => {
   try {
+    await ensureReviewHoldColumn();
     const [rows] = await db.query(`
       SELECT
         dt.id,
@@ -463,7 +514,7 @@ exports.getPublicTableByToken = async (req, res) => {
         SELECT COUNT(id) AS active_orders
         FROM customer_orders
         WHERE table_id = ?
-          AND status IN ('pending', 'accepted', 'preparing', 'ready')
+          AND ${buildActiveTableOrderCondition('')}
       `, [rows[0].id]);
       activeOrders = Number(orderRows[0]?.active_orders || 0);
     } catch (_) {
@@ -492,6 +543,7 @@ exports.getPublicMenu = async (req, res) => {
 exports.createOrder = async (req, res) => {
   let conn;
   try {
+    await ensureReviewHoldColumn();
     await ensurePaymentTables();
     const { table_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
 
@@ -514,7 +566,7 @@ exports.createOrder = async (req, res) => {
       SELECT id, order_code
       FROM customer_orders
       WHERE table_id = ?
-        AND status IN ('pending', 'accepted', 'preparing', 'ready')
+        AND ${buildActiveTableOrderCondition('')}
       LIMIT 1
     `, [tables[0].id]);
     if (activeOrders.length) {
@@ -674,6 +726,7 @@ exports.createOrder = async (req, res) => {
 
 exports.getOrderByCode = async (req, res) => {
   try {
+    await ensureReviewHoldColumn();
     let order = await getOrderRowByCode(req.params.orderCode);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     await expireOverduePaymentOrders(db, { orderId: order.id });
@@ -686,6 +739,7 @@ exports.getOrderByCode = async (req, res) => {
 
 exports.submitPaymentProof = async (req, res) => {
   try {
+    await ensureReviewHoldColumn();
     await ensurePaymentTables();
     if (!req.file) return res.status(400).json({ message: 'Bukti pembayaran wajib dilampirkan' });
 
@@ -733,6 +787,7 @@ exports.submitPaymentProof = async (req, res) => {
 exports.submitReview = async (req, res) => {
   const conn = await db.getConnection();
   try {
+    await ensureReviewHoldColumn();
     const order = await getOrderRowByCode(req.params.orderCode);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     if (order.status !== 'completed') {
@@ -755,27 +810,25 @@ exports.submitReview = async (req, res) => {
 
     await conn.beginTransaction();
     const reviewProgram = await getReviewProgram(conn);
-    if (!reviewProgram) {
-      const err = new Error('Program diskon review sedang tidak aktif');
-      err.status_code = 400;
-      throw err;
-    }
     const reviewPhone = req.body.customer_phone || order.customer_phone || '';
-    const usage = reviewProgram?.id
-      ? await validateProgramUsage(conn, reviewProgram, reviewPhone)
-      : { valid: true };
-    if (!usage.valid) {
-      const err = new Error(usage.message);
-      err.status_code = 400;
-      throw err;
+    let rewardEligible = Boolean(reviewProgram?.id);
+    let rewardMessage = rewardEligible
+      ? `${reviewProgram.name} berhasil diterapkan.`
+      : 'Program voucher review sedang tidak aktif, review tetap tersimpan tanpa voucher.';
+
+    if (rewardEligible) {
+      const usage = await validateProgramUsage(conn, reviewProgram, reviewPhone);
+      if (!usage.valid) {
+        rewardEligible = false;
+        rewardMessage = `${usage.message}. Review tetap tersimpan tanpa voucher.`;
+      }
     }
 
-    const minMenuRating = Number(reviewProgram.min_menu_rating || 1);
-    const minServiceRating = Number(reviewProgram.min_service_rating || 1);
-    if (serviceRating < minServiceRating) {
-      const err = new Error(`Rating pelayanan minimal ${minServiceRating} untuk klaim diskon review`);
-      err.status_code = 400;
-      throw err;
+    const minMenuRating = Number(reviewProgram?.min_menu_rating || 1);
+    const minServiceRating = Number(reviewProgram?.min_service_rating || 1);
+    if (rewardEligible && serviceRating < minServiceRating) {
+      rewardEligible = false;
+      rewardMessage = `Rating pelayanan minimal ${minServiceRating} untuk klaim voucher. Review tetap tersimpan tanpa voucher.`;
     }
 
     await conn.query(`
@@ -793,10 +846,9 @@ exports.submitReview = async (req, res) => {
         err.status_code = 400;
         throw err;
       }
-      if (rating < minMenuRating) {
-        const err = new Error(`Rating menu minimal ${minMenuRating} untuk klaim diskon review`);
-        err.status_code = 400;
-        throw err;
+      if (rewardEligible && rating < minMenuRating) {
+        rewardEligible = false;
+        rewardMessage = `Rating menu minimal ${minMenuRating} untuk klaim voucher. Review tetap tersimpan tanpa voucher.`;
       }
 
       await conn.query(`
@@ -810,6 +862,26 @@ exports.submitReview = async (req, res) => {
         rating,
         review.comment ? String(review.comment).trim() : null,
       ]);
+    }
+
+    if (!rewardEligible) {
+      await conn.query(`
+        UPDATE customer_orders
+        SET customer_phone = COALESCE(customer_phone, ?),
+            reviewed_at = NOW(),
+            review_skipped_at = NULL
+        WHERE id = ?
+      `, [reviewPhone || null, order.id]);
+
+      await conn.commit();
+
+      const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
+      return res.json({
+        message: `Terima kasih atas review Anda. ${rewardMessage}`,
+        discount_rate: 0,
+        discount_amount: 0,
+        data: updated,
+      });
     }
 
     const [[bundleScope]] = await conn.query(`
@@ -838,7 +910,8 @@ exports.submitReview = async (req, res) => {
           discount_label = ?,
           discount_program_id = COALESCE(discount_program_id, ?),
           customer_phone = COALESCE(customer_phone, ?),
-          reviewed_at = NOW()
+          reviewed_at = NOW(),
+          review_skipped_at = NULL
       WHERE id = ?
     `, [discountRate, discountAmount, finalTotal, discountLabel, reviewProgram.id || null, reviewPhone || null, order.id]);
 
@@ -870,7 +943,7 @@ exports.submitReview = async (req, res) => {
 
     const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
     res.json({
-      message: `Terima kasih atas review Anda. ${reviewProgram.name} berhasil diterapkan.`,
+      message: `Terima kasih atas review Anda. ${rewardMessage}`,
       discount_rate: discountRate,
       discount_amount: reviewDiscountAmount,
       data: updated,
@@ -883,9 +956,37 @@ exports.submitReview = async (req, res) => {
   }
 };
 
+exports.skipReview = async (req, res) => {
+  try {
+    await ensureReviewHoldColumn();
+    const order = await getOrderRowByCode(req.params.orderCode);
+    if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
+    if (order.status !== 'completed') {
+      return res.status(400).json({ message: 'Review hanya bisa dilewati setelah pesanan selesai' });
+    }
+    if (order.reviewed_at) {
+      return res.status(400).json({ message: 'Pesanan ini sudah direview' });
+    }
+
+    await db.query(
+      'UPDATE customer_orders SET review_skipped_at = COALESCE(review_skipped_at, NOW()) WHERE id = ?',
+      [order.id]
+    );
+
+    const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
+    res.json({
+      message: 'Review dilewati. Meja akan tersedia kembali setelah cooldown selesai.',
+      data: updated,
+    });
+  } catch (err) {
+    res.status(err.status_code || 500).json({ message: err.message || 'Gagal melewati review' });
+  }
+};
+
 exports.listManagedTables = async (req, res) => {
   try {
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    await ensureReviewHoldColumn();
     await expireOverduePaymentOrders(db, { branchId });
     const branchWhere = branchId ? 'WHERE dt.branch_id = ?' : '';
     const params = branchId ? [branchId] : [];
@@ -904,7 +1005,7 @@ exports.listManagedTables = async (req, res) => {
         dt.created_at,
         dt.updated_at,
         COUNT(co.id) AS total_orders,
-        SUM(CASE WHEN co.status NOT IN ('completed', 'cancelled') THEN 1 ELSE 0 END) AS active_orders
+        SUM(CASE WHEN ${buildActiveTableOrderCondition('co')} THEN 1 ELSE 0 END) AS active_orders
       FROM dining_tables dt
       LEFT JOIN branches b ON b.id = dt.branch_id
       LEFT JOIN customer_orders co ON co.table_id = dt.id
@@ -1036,6 +1137,7 @@ exports.listOrders = async (req, res) => {
 exports.updateOrderStatus = async (req, res) => {
   const conn = await db.getConnection();
   try {
+    await ensureReviewHoldColumn();
     const nextStatus = req.body.status;
     if (!STAFF_ORDER_STATUSES.includes(nextStatus)) {
       return res.status(400).json({ message: 'Status pesanan tidak valid' });

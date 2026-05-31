@@ -15,6 +15,7 @@ router.post('/orders', c.createOrder);
 router.get('/orders/:orderCode', c.getOrderByCode);
 router.post('/orders/:orderCode/payment-proof', paymentUpload.single('proof'), c.submitPaymentProof);
 router.post('/orders/:orderCode/review', c.submitReview);
+router.post('/orders/:orderCode/review-skip', c.skipReview);
 
 router.get('/orders', authenticate, c.listOrders);
 router.put('/orders/:id/status', authenticate, c.updateOrderStatus);
