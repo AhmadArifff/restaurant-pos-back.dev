@@ -1,20 +1,11 @@
 const multer = require('multer');
+const { createFileFilter } = require('../utils/uploadValidation');
 
-const allowedMimeTypes = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-  'application/pdf',
-];
-
-const fileFilter = (req, file, cb) => {
-  if (allowedMimeTypes.includes(file.mimetype)) {
-    cb(null, true);
-    return;
-  }
-  cb(new Error('Format file bukti pembayaran tidak didukung'), false);
-};
+const fileFilter = createFileFilter({
+  allowedExtensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
+  allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+  message: 'Format file tidak didukung. Gunakan JPG, PNG, WEBP, atau PDF.',
+});
 
 module.exports = multer({
   storage: multer.memoryStorage(),

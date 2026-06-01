@@ -1,12 +1,11 @@
 const multer = require('multer');
-const path   = require('path');
+const { createFileFilter } = require('../utils/uploadValidation');
 
-const fileFilter = (req, file, cb) => {
-  const allowed = ['.jpg', '.jpeg', '.png', '.webp'];
-  const ext = path.extname(file.originalname).toLowerCase();
-  if (allowed.includes(ext)) cb(null, true);
-  else cb(new Error('Format gambar tidak didukung'), false);
-};
+const fileFilter = createFileFilter({
+  allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
+  allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp'],
+  message: 'Format gambar tidak didukung. Gunakan JPG, PNG, atau WEBP.',
+});
 
 module.exports = multer({
   storage: multer.memoryStorage(),

@@ -57,6 +57,10 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ message: 'Ukuran file terlalu besar. Maksimal upload gambar 10MB.' });
   }
 
+  if (err?.statusCode === 400) {
+    return res.status(400).json({ message: err.message || 'File upload tidak valid.' });
+  }
+
   if (err?.type === 'entity.too.large') {
     return res.status(413).json({ message: 'Ukuran data terlalu besar. Unggah gambar sebagai file lalu simpan kembali.' });
   }
