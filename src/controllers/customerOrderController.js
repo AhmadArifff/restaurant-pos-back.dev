@@ -659,6 +659,9 @@ exports.listPublicTables = async (req, res) => {
     const orderBy = db.isPostgres
       ? 'table_number ASC'
       : 'CAST(table_number AS UNSIGNED), table_number';
+    const activeOrderCodesSelect = db.isPostgres
+      ? "STRING_AGG(DISTINCT co.order_code, ',') AS active_order_codes"
+      : 'GROUP_CONCAT(DISTINCT co.order_code) AS active_order_codes';
     const [rows] = await db.query(`
       SELECT
         dt.id,
@@ -673,6 +676,7 @@ exports.listPublicTables = async (req, res) => {
         b.address AS branch_address,
         COUNT(DISTINCT co.id) AS active_order_count,
         COUNT(DISTINCT cts.id) AS active_session_count,
+        ${activeOrderCodesSelect},
         MAX(co.created_at) AS active_order_created_at,
         MAX(co.completed_at) AS active_order_completed_at,
         MAX(co.reviewed_at) AS active_order_reviewed_at,
@@ -695,6 +699,7 @@ exports.listPublicTables = async (req, res) => {
       ...row,
       active_order_count: Number(row.active_order_count || 0),
       active_session_count: Number(row.active_session_count || 0),
+      active_order_codes: String(row.active_order_codes || '').split(',').filter(Boolean),
       active_orders: Number(row.active_order_count || 0) + Number(row.active_session_count || 0),
       queue_waiting_count: queueWaitingCount,
       estimated_release_at: estimateReleaseAt(row),
