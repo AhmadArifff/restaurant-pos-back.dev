@@ -49,7 +49,7 @@ const deleteProductImage = async (imageUrl) => {
 const getUploadedProductImageUrl = async (file) => {
   if (!file) return null;
 
-  if (isSupabaseStorageEnabled() || process.env.VERCEL) {
+  if (isSupabaseStorageEnabled() || process.env.VERCEL || process.env.NODE_ENV === 'production') {
     const uploaded = await uploadImageBuffer({
       folder: 'products',
       prefix: 'product',
@@ -58,11 +58,12 @@ const getUploadedProductImageUrl = async (file) => {
     return uploaded.publicUrl;
   }
 
-  if (!file.filename) {
-    throw new Error('Storage lokal tidak tersedia untuk upload file.');
-  }
-
-  return `/images/products/${file.filename}`;
+  const ext = path.extname(file.originalname || '') || '.jpg';
+  const safeName = `product-${Date.now()}${ext.toLowerCase()}`;
+  const dir = path.join(process.cwd(), 'public/images/products');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, safeName), file.buffer);
+  return `/images/products/${safeName}`;
 };
 
 const toProductIds = (products) => products.map((product) => Number(product.id)).filter(Boolean);

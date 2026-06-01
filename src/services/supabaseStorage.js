@@ -3,15 +3,31 @@ const { createClient } = require('@supabase/supabase-js');
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'restaurant-pos-assets';
 
+const getSupabaseKey = () => (
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+  || process.env.SUPABASE_SECRET_KEY
+  || process.env.SUPABASE_SERVICE_KEY
+  || process.env.SUPABASE_ANON_KEY
+  || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+const getSupabaseServiceKey = () => (
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+  || process.env.SUPABASE_SECRET_KEY
+  || process.env.SUPABASE_SERVICE_KEY
+);
+
 const hasSupabaseConfig = () => Boolean(
   process.env.SUPABASE_URL
-  && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)
+  && getSupabaseKey()
 );
 
 const getStorageDriver = () => {
   const configured = String(process.env.STORAGE_DRIVER || '').toLowerCase();
   if (configured === 'supabase') return 'supabase';
-  if (process.env.VERCEL && hasSupabaseConfig()) return 'supabase';
+  if (hasSupabaseConfig() && (process.env.VERCEL || process.env.NODE_ENV === 'production' || configured !== 'local')) {
+    return 'supabase';
+  }
   if (configured) return configured;
   return 'local';
 };
@@ -20,7 +36,7 @@ const getSupabaseClient = () => {
   if (getStorageDriver() !== 'supabase') return null;
 
   const supabaseUrl = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
+  const serviceKey = getSupabaseKey();
 
   if (!supabaseUrl || !serviceKey) {
     throw new Error('SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY wajib diisi untuk STORAGE_DRIVER=supabase');
@@ -49,11 +65,24 @@ const getPublicUrl = (objectPath) => {
   return data.publicUrl;
 };
 
+const ensureBucketExists = async (supabase) => {
+  if (!getSupabaseServiceKey()) return;
+
+  const { data, error } = await supabase.storage.getBucket(BUCKET);
+  if (!error && data) return;
+
+  const { error: createError } = await supabase.storage.createBucket(BUCKET, { public: true });
+  if (createError && !/already exists|duplicate/i.test(createError.message || '')) {
+    throw createError;
+  }
+};
+
 const uploadImageBuffer = async ({ folder, file, prefix }) => {
   const supabase = getSupabaseClient();
   if (!supabase) {
     throw new Error('Storage Supabase belum aktif untuk upload file.');
   }
+  await ensureBucketExists(supabase);
   const ext = path.extname(file.originalname || '') || '.bin';
   const baseName = sanitizeName(path.basename(file.originalname || 'upload', ext));
   const objectPath = `${folder}/${sanitizeName(prefix)}-${Date.now()}-${baseName}${ext.toLowerCase()}`;
