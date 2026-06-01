@@ -66,6 +66,12 @@ const getUploadedProductImageUrl = async (file) => {
   return `/images/products/${safeName}`;
 };
 
+const normalizeProductImageUrl = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return text;
+};
+
 const toProductIds = (products) => products.map((product) => Number(product.id)).filter(Boolean);
 const toStockItemIds = (ingredientsByProductId) => [
   ...new Set(Object.values(ingredientsByProductId)
@@ -179,7 +185,9 @@ exports.create = async (req, res) => {
   try {
     await ensureProductImageSchema();
     const { name, price, category_id, ingredients } = req.body;
-    const image_url = await getUploadedProductImageUrl(req.file);
+    const image_url = req.file
+      ? await getUploadedProductImageUrl(req.file)
+      : normalizeProductImageUrl(req.body.image_url);
 
     if (!name || !price)
       return res.status(400).json({ message: 'Nama dan harga wajib diisi' });
@@ -210,8 +218,12 @@ exports.update = async (req, res) => {
     let image_url = old[0]?.image_url;
     const oldImageUrl = image_url;
 
+    const hasBodyImageUrl = Object.prototype.hasOwnProperty.call(req.body, 'image_url');
+
     if (req.file) {
       image_url = await getUploadedProductImageUrl(req.file);
+    } else if (hasBodyImageUrl) {
+      image_url = normalizeProductImageUrl(req.body.image_url);
     }
 
     await db.query(
@@ -225,7 +237,7 @@ exports.update = async (req, res) => {
       await insertProductIngredients(db, id, ingredients);
     }
 
-    if (req.file && oldImageUrl && oldImageUrl !== image_url) {
+    if ((req.file || hasBodyImageUrl) && oldImageUrl && oldImageUrl !== image_url) {
       await deleteProductImage(oldImageUrl);
     }
 
