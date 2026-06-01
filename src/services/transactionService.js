@@ -273,6 +273,20 @@ const createPosCustomerOrder = async ({
     throw err;
   }
 
+  const [activeSessions] = await conn.query(`
+    SELECT id
+    FROM customer_table_sessions
+    WHERE table_id = ?
+      AND status = 'active'
+      AND expires_at > NOW()
+    LIMIT 1
+  `, [tableId]);
+  if (activeSessions.length) {
+    const err = new Error(`Meja ${table.table_number} sedang ditempati pelanggan`);
+    err.status_code = 409;
+    throw err;
+  }
+
   const orderCode = makeOrderCode();
   const [orderResult] = await conn.query(`
     INSERT INTO customer_orders
