@@ -26,5 +26,5 @@ const fileFilter = (req, file, cb) => {
 module.exports = multer({
   storage: isSupabaseStorageEnabled() ? multer.memoryStorage() : storage,
   fileFilter,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 },
 });

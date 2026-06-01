@@ -12,6 +12,24 @@ const {
 } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
 
+let ensureProductImageSchemaPromise = null;
+
+const ensureProductImageSchema = async () => {
+  if (!ensureProductImageSchemaPromise) {
+    ensureProductImageSchemaPromise = (async () => {
+      if (db.isPostgres) {
+        await db.query('ALTER TABLE products ALTER COLUMN image_url TYPE TEXT');
+        return;
+      }
+      await db.query('ALTER TABLE products MODIFY image_url TEXT NULL');
+    })().catch((err) => {
+      ensureProductImageSchemaPromise = null;
+      throw err;
+    });
+  }
+  return ensureProductImageSchemaPromise;
+};
+
 const deleteProductImage = async (imageUrl) => {
   if (!imageUrl) return;
 
@@ -110,6 +128,7 @@ const insertProductIngredients = async (executor, productId, ingredients) => {
 
 exports.getAll = async (req, res) => {
   try {
+    await ensureProductImageSchema();
     const { category_id, search } = req.query;
     const branchId = getRequestBranchId(req) || req.user?.branch_id || null;
     let sql = `
@@ -149,6 +168,7 @@ exports.getAll = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
+    await ensureProductImageSchema();
     const { name, price, category_id, ingredients } = req.body;
     const image_url = await getUploadedProductImageUrl(req.file);
 
@@ -171,6 +191,7 @@ exports.create = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    await ensureProductImageSchema();
     const { name, price, category_id, ingredients } = req.body;
     const { id } = req.params;
 
