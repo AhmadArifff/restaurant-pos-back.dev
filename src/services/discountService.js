@@ -510,6 +510,7 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
   const components = [];
   let voucher = null;
   let reviewVoucher = null;
+  let voucherError = null;
 
   if (normalizedCode) {
     const [rows] = await executor.query(
@@ -518,9 +519,7 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
     );
     voucher = normalizeProgram(rows[0]);
     if (!voucher) {
-      const err = new Error('Kode voucher tidak ditemukan');
-      err.status_code = 400;
-      throw err;
+      voucherError = 'Kode voucher tidak ditemukan';
     }
   }
 
@@ -557,16 +556,14 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
   if (voucher) {
     const usage = await validateProgramUsage(executor, voucher, customerPhone);
     if (!usage.valid) {
-      const err = new Error(usage.message);
-      err.status_code = 400;
-      throw err;
-    }
-
-    const voucherBase = toMoney(Math.max(0, total - Number(bestBundle?.discount_base || 0)));
-    if (voucherBase >= Number(voucher.min_order_amount || 0)) {
-      const amount = calculateAmount(voucherBase, voucher);
-      if (amount > 0) {
-        components.push(makeDiscountComponent({ program: voucher, usage, discountBase: voucherBase, amount }));
+      voucherError = usage.message;
+    } else {
+      const voucherBase = toMoney(Math.max(0, total - Number(bestBundle?.discount_base || 0)));
+      if (voucherBase >= Number(voucher.min_order_amount || 0)) {
+        const amount = calculateAmount(voucherBase, voucher);
+        if (amount > 0) {
+          components.push(makeDiscountComponent({ program: voucher, usage, discountBase: voucherBase, amount }));
+        }
       }
     }
   }
@@ -595,6 +592,12 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
         bundle_items: [],
       });
     }
+  }
+
+  if (voucherError && !components.length) {
+    const err = new Error(voucherError);
+    err.status_code = 400;
+    throw err;
   }
 
   return mergeDiscountComponents(components, total);
