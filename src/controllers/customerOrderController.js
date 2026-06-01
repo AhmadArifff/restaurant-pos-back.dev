@@ -1469,7 +1469,7 @@ exports.deleteTable = async (req, res) => {
 
 exports.listOrders = async (req, res) => {
   try {
-    const { status, limit = 80 } = req.query;
+    const { status, limit = 80, date_from, date_to, search } = req.query;
     const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     await expireOverduePaymentOrders(db, { branchId });
     const params = [];
@@ -1482,6 +1482,25 @@ exports.listOrders = async (req, res) => {
     if (branchId) {
       where += ' AND co.branch_id = ?';
       params.push(branchId);
+    }
+    if (date_from) {
+      where += ' AND co.created_at >= ?';
+      params.push(`${date_from} 00:00:00`);
+    }
+    if (date_to) {
+      where += ` AND co.created_at < ${db.isPostgres ? '?::timestamp + INTERVAL \'1 day\'' : 'DATE_ADD(?, INTERVAL 1 DAY)'}`;
+      params.push(`${date_to} 00:00:00`);
+    }
+    if (search) {
+      const keyword = `%${String(search).trim()}%`;
+      where += ` AND (
+        co.order_code LIKE ?
+        OR co.customer_name LIKE ?
+        OR co.customer_phone LIKE ?
+        OR dt.table_number LIKE ?
+        OR dt.table_name LIKE ?
+      )`;
+      params.push(keyword, keyword, keyword, keyword, keyword);
     }
 
     params.push(Number(limit));
