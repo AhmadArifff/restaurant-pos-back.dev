@@ -321,6 +321,24 @@ create table if not exists discount_redemptions (
   created_at timestamptz default now()
 );
 
+create table if not exists review_reward_vouchers (
+  id bigserial primary key,
+  token varchar(96) unique not null,
+  program_id bigint null references discount_programs(id) on delete set null,
+  source_order_id bigint not null references customer_orders(id) on delete cascade,
+  redeemed_order_id bigint null references customer_orders(id) on delete set null,
+  customer_name varchar(160) null,
+  customer_phone varchar(40) null,
+  normalized_phone varchar(20) null,
+  discount_type varchar(20) not null default 'percent',
+  discount_value numeric(12,2) not null default 0,
+  status varchar(24) not null default 'active',
+  issued_at timestamptz default now(),
+  expires_at timestamptz not null,
+  redeemed_at timestamptz null,
+  created_at timestamptz default now()
+);
+
 create table if not exists payment_methods (
   id bigserial primary key,
   method_key varchar(40) unique not null,
@@ -454,6 +472,9 @@ create index if not exists idx_discount_redemptions_phone on discount_redemption
 create index if not exists idx_discount_redemptions_transaction on discount_redemptions(transaction_id);
 create index if not exists idx_discount_redemptions_order on discount_redemptions(order_id);
 create index if not exists idx_discount_redemptions_program_created_at on discount_redemptions(program_id, created_at desc);
+create index if not exists idx_review_reward_vouchers_token on review_reward_vouchers(token);
+create index if not exists idx_review_reward_vouchers_phone on review_reward_vouchers(normalized_phone, status, expires_at);
+create index if not exists idx_review_reward_vouchers_source_order on review_reward_vouchers(source_order_id);
 create index if not exists idx_payment_methods_status_sort on payment_methods(status, sort_order, id);
 create index if not exists idx_customer_orders_payment_due on customer_orders(payment_due_at);
 create index if not exists idx_customer_orders_review_hold on customer_orders(table_id, status, completed_at, reviewed_at, review_skipped_at);

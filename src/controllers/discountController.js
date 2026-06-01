@@ -2,6 +2,7 @@ const db = require('../config/db');
 const {
   findBestDiscount,
   getActivePrograms,
+  validateReviewVoucher,
   normalizeProgram,
   parseBundleItems,
   serializeBundleIds,
@@ -160,6 +161,8 @@ exports.preview = async (req, res) => {
       items: Array.isArray(req.body.items) ? req.body.items : [],
       voucherCode: req.body.voucher_code,
       customerPhone: req.body.customer_phone,
+      customerName: req.body.customer_name,
+      reviewVoucherToken: req.body.review_voucher_token,
     });
 
     if (!discount) {
@@ -187,6 +190,7 @@ exports.preview = async (req, res) => {
         discount_amount: component.discount_amount,
         discount_base: component.discount_base,
         voucher_code: component.voucher_code,
+        review_voucher: component.review_voucher || null,
         bundle_items: component.bundle_items || [],
       })),
       final_total: Math.max(0, subtotal - discount.discount_amount),
@@ -194,6 +198,29 @@ exports.preview = async (req, res) => {
     });
   } catch (err) {
     sendError(res, err, 'Diskon belum bisa dicek. Silakan coba lagi.');
+  }
+};
+
+exports.validateReviewVoucher = async (req, res) => {
+  try {
+    const validation = await validateReviewVoucher(db, {
+      token: req.body.token || req.body.review_voucher_token,
+      customerPhone: req.body.customer_phone,
+      customerName: req.body.customer_name,
+      requireIdentity: true,
+    });
+
+    if (!validation.valid) {
+      return res.status(400).json({ valid: false, message: validation.message });
+    }
+
+    res.json({
+      valid: true,
+      message: 'Voucher review valid dan bisa digunakan.',
+      data: validation.payload,
+    });
+  } catch (err) {
+    sendError(res, err, 'Voucher review belum bisa divalidasi. Silakan coba lagi.');
   }
 };
 

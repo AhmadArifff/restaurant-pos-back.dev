@@ -1,3 +1,6 @@
+const crypto = require('crypto');
+const db = require('../config/db');
+
 const normalizePhone = (value) => {
   const digits = String(value || '').replace(/\D/g, '');
   let local = digits;
@@ -7,6 +10,88 @@ const normalizePhone = (value) => {
 };
 
 const toMoney = (value) => Number(Number(value || 0).toFixed(2));
+const REVIEW_VOUCHER_DAYS = 7;
+
+const formatSqlDateTime = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+
+const makeReviewVoucherToken = () => `RV${crypto.randomBytes(12).toString('hex').toUpperCase()}`;
+
+const normalizeName = (value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+const extractReviewVoucherToken = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed?.type === 'review_reward_voucher' && parsed?.token) return String(parsed.token).trim().toUpperCase();
+  } catch (_) {}
+
+  const marker = 'SK-REVIEW-VOUCHER:';
+  if (raw.toUpperCase().startsWith(marker)) return raw.slice(marker.length).trim().toUpperCase();
+  return raw.trim().toUpperCase();
+};
+
+let reviewVoucherSchemaReady = false;
+const ignoreSchemaExistsError = (err) => (
+  err?.code === '42701'
+  || err?.code === '42P07'
+  || /Duplicate column|Duplicate key name|already exists/i.test(err?.message || '')
+);
+
+const ensureReviewVoucherSchema = async (executor = db) => {
+  if (reviewVoucherSchemaReady) return;
+  if (db.isPostgres) {
+    await executor.query(`
+      CREATE TABLE IF NOT EXISTS review_reward_vouchers (
+        id BIGSERIAL PRIMARY KEY,
+        token VARCHAR(96) NOT NULL UNIQUE,
+        program_id BIGINT NULL REFERENCES discount_programs(id) ON DELETE SET NULL,
+        source_order_id BIGINT NOT NULL REFERENCES customer_orders(id) ON DELETE CASCADE,
+        redeemed_order_id BIGINT NULL REFERENCES customer_orders(id) ON DELETE SET NULL,
+        customer_name VARCHAR(160) NULL,
+        customer_phone VARCHAR(40) NULL,
+        normalized_phone VARCHAR(20) NULL,
+        discount_type VARCHAR(20) NOT NULL DEFAULT 'percent',
+        discount_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+        status VARCHAR(24) NOT NULL DEFAULT 'active',
+        issued_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        redeemed_at TIMESTAMPTZ NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await executor.query('CREATE INDEX IF NOT EXISTS idx_review_reward_vouchers_token ON review_reward_vouchers(token)');
+    await executor.query('CREATE INDEX IF NOT EXISTS idx_review_reward_vouchers_phone ON review_reward_vouchers(normalized_phone, status, expires_at)');
+    await executor.query('CREATE INDEX IF NOT EXISTS idx_review_reward_vouchers_source_order ON review_reward_vouchers(source_order_id)');
+    reviewVoucherSchemaReady = true;
+    return;
+  }
+
+  await executor.query(`
+    CREATE TABLE IF NOT EXISTS review_reward_vouchers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      token VARCHAR(96) NOT NULL UNIQUE,
+      program_id INT NULL,
+      source_order_id INT NOT NULL,
+      redeemed_order_id INT NULL,
+      customer_name VARCHAR(160) NULL,
+      customer_phone VARCHAR(40) NULL,
+      normalized_phone VARCHAR(20) NULL,
+      discount_type VARCHAR(20) NOT NULL DEFAULT 'percent',
+      discount_value DECIMAL(12,2) NOT NULL DEFAULT 0,
+      status VARCHAR(24) NOT NULL DEFAULT 'active',
+      issued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      redeemed_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY unique_review_voucher_token (token),
+      INDEX idx_review_reward_vouchers_phone (normalized_phone, status, expires_at),
+      INDEX idx_review_reward_vouchers_source_order (source_order_id)
+    )
+  `);
+  reviewVoucherSchemaReady = true;
+};
 
 const parseBundleIds = (value) => {
   if (!value) return [];
@@ -82,6 +167,189 @@ const calculateAmount = (subtotal, program) => {
   if (!program || total <= 0) return 0;
   if (program.discount_type === 'fixed') return toMoney(Math.min(total, Number(program.discount_value || 0)));
   return toMoney(Math.min(total, total * (Number(program.discount_value || 0) / 100)));
+};
+
+const mapReviewVoucher = (row) => {
+  if (!row) return null;
+  return {
+    ...row,
+    token: String(row.token || '').toUpperCase(),
+    discount_value: Number(row.discount_value || 0),
+    source_order_date: row.source_order_date || row.issued_at || row.created_at,
+    customer_name: row.customer_name || '',
+    customer_phone: row.customer_phone || '',
+  };
+};
+
+const getReviewVoucherByToken = async (executor, tokenValue) => {
+  await ensureReviewVoucherSchema(executor);
+  const token = extractReviewVoucherToken(tokenValue);
+  if (!token) return null;
+  const [rows] = await executor.query(`
+    SELECT rv.*, co.order_code AS source_order_code, co.created_at AS source_order_date,
+      dp.name AS program_name
+    FROM review_reward_vouchers rv
+    JOIN customer_orders co ON co.id = rv.source_order_id
+    LEFT JOIN discount_programs dp ON dp.id = rv.program_id
+    WHERE rv.token = ?
+    LIMIT 1
+  `, [token]);
+  return mapReviewVoucher(rows[0]);
+};
+
+const buildReviewVoucherPayload = (voucher) => {
+  if (!voucher) return null;
+  return {
+    token: voucher.token,
+    program_id: voucher.program_id,
+    program_name: voucher.program_name || 'Voucher Review Pelanggan',
+    discount_type: voucher.discount_type,
+    discount_value: Number(voucher.discount_value || 0),
+    customer_name: voucher.customer_name || '',
+    customer_phone: voucher.customer_phone || '',
+    source_order_id: voucher.source_order_id,
+    source_order_code: voucher.source_order_code,
+    source_order_date: voucher.source_order_date,
+    issued_at: voucher.issued_at,
+    expires_at: voucher.expires_at,
+    redeemed_at: voucher.redeemed_at,
+    redeemed_order_id: voucher.redeemed_order_id,
+    status: voucher.status,
+    qr_payload: JSON.stringify({
+      type: 'review_reward_voucher',
+      token: voucher.token,
+    }),
+  };
+};
+
+const validateReviewVoucher = async (executor, {
+  token,
+  customerPhone = '',
+  customerName = '',
+  requireIdentity = true,
+} = {}) => {
+  const voucher = await getReviewVoucherByToken(executor, token);
+  if (!voucher) return { valid: false, message: 'Voucher review tidak ditemukan' };
+  if (voucher.status !== 'active') return { valid: false, message: 'Voucher review sudah tidak aktif' };
+  if (voucher.redeemed_at || voucher.redeemed_order_id) return { valid: false, message: 'Voucher review sudah pernah digunakan' };
+  if (voucher.expires_at && new Date(voucher.expires_at).getTime() < Date.now()) {
+    return { valid: false, message: 'Voucher review sudah expired' };
+  }
+
+  const normalizedInputPhone = normalizePhone(customerPhone);
+  if (requireIdentity && !normalizedInputPhone) {
+    return { valid: false, message: 'Nomor HP wajib diisi untuk validasi voucher review' };
+  }
+  if (voucher.normalized_phone && normalizedInputPhone && voucher.normalized_phone !== normalizedInputPhone) {
+    return { valid: false, message: 'Nomor HP tidak sesuai dengan pemilik voucher review' };
+  }
+
+  const sourceName = normalizeName(voucher.customer_name);
+  const inputName = normalizeName(customerName);
+  if (requireIdentity && sourceName && !inputName) {
+    return { valid: false, message: 'Nama pelanggan wajib diisi untuk validasi voucher review' };
+  }
+  if (sourceName && inputName && sourceName !== inputName) {
+    return { valid: false, message: 'Nama pelanggan tidak sesuai dengan pemilik voucher review' };
+  }
+
+  return {
+    valid: true,
+    voucher,
+    normalizedPhone: normalizedInputPhone || voucher.normalized_phone || '',
+    payload: buildReviewVoucherPayload(voucher),
+  };
+};
+
+const validateReviewRewardIssuance = async (executor, program, customerPhone = '') => {
+  const usage = await validateProgramUsage(executor, program, customerPhone);
+  if (!usage.valid) return usage;
+  if (!program?.id) return usage;
+
+  await ensureReviewVoucherSchema(executor);
+  const normalizedPhone = normalizePhone(customerPhone);
+  const [totalRows] = await executor.query(
+    'SELECT COUNT(*) AS total FROM review_reward_vouchers WHERE program_id = ?',
+    [program.id]
+  );
+  const issuedTotal = Number(totalRows[0]?.total || 0);
+  if (program.total_usage_limit != null && issuedTotal >= Number(program.total_usage_limit)) {
+    return { valid: false, message: 'Kuota program voucher review sudah habis' };
+  }
+
+  if (normalizedPhone && Number(program.usage_limit_per_phone || 0) > 0) {
+    const [phoneRows] = await executor.query(
+      'SELECT COUNT(*) AS total FROM review_reward_vouchers WHERE program_id = ? AND normalized_phone = ?',
+      [program.id, normalizedPhone]
+    );
+    const issuedForPhone = Number(phoneRows[0]?.total || 0);
+    if (issuedForPhone >= Number(program.usage_limit_per_phone || 0)) {
+      return { valid: false, message: 'Nomor HP ini sudah mencapai batas klaim voucher review' };
+    }
+  }
+
+  return usage;
+};
+
+const createReviewVoucher = async (executor, { order, program, customerPhone = '', customerName = '' } = {}) => {
+  if (!order?.id || !program?.id) return null;
+  await ensureReviewVoucherSchema(executor);
+  const [existing] = await executor.query(`
+    SELECT rv.*, co.order_code AS source_order_code, co.created_at AS source_order_date,
+      dp.name AS program_name
+    FROM review_reward_vouchers rv
+    JOIN customer_orders co ON co.id = rv.source_order_id
+    LEFT JOIN discount_programs dp ON dp.id = rv.program_id
+    WHERE rv.source_order_id = ? AND rv.program_id = ?
+    LIMIT 1
+  `, [order.id, program.id]);
+  if (existing.length) return buildReviewVoucherPayload(mapReviewVoucher(existing[0]));
+
+  const token = makeReviewVoucherToken();
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + REVIEW_VOUCHER_DAYS * 24 * 60 * 60 * 1000);
+  const name = String(customerName || order.customer_name || '').trim();
+  const phone = String(customerPhone || order.customer_phone || '').trim();
+  const normalizedPhone = normalizePhone(phone);
+  const [result] = await executor.query(`
+    INSERT INTO review_reward_vouchers
+      (token, program_id, source_order_id, customer_name, customer_phone, normalized_phone,
+       discount_type, discount_value, status, issued_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `, [
+    token,
+    program.id,
+    order.id,
+    name || null,
+    phone || null,
+    normalizedPhone || null,
+    program.discount_type || 'percent',
+    Number(program.discount_value || 0),
+    formatSqlDateTime(issuedAt),
+    formatSqlDateTime(expiresAt),
+  ]);
+  const [rows] = await executor.query(`
+    SELECT rv.*, co.order_code AS source_order_code, co.created_at AS source_order_date,
+      dp.name AS program_name
+    FROM review_reward_vouchers rv
+    JOIN customer_orders co ON co.id = rv.source_order_id
+    LEFT JOIN discount_programs dp ON dp.id = rv.program_id
+    WHERE rv.id = ?
+    LIMIT 1
+  `, [result.insertId]);
+  return buildReviewVoucherPayload(mapReviewVoucher(rows[0]));
+};
+
+const redeemReviewVoucher = async (executor, { token, orderId } = {}) => {
+  if (!token || !orderId) return;
+  await ensureReviewVoucherSchema(executor);
+  await executor.query(`
+    UPDATE review_reward_vouchers
+    SET status = 'redeemed',
+        redeemed_order_id = ?,
+        redeemed_at = NOW()
+    WHERE token = ? AND status = 'active' AND redeemed_at IS NULL
+  `, [orderId, extractReviewVoucherToken(token)]);
 };
 
 const getProgramById = async (executor, id) => {
@@ -234,13 +502,14 @@ const mergeDiscountComponents = (components, total) => {
   };
 };
 
-const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = '', customerPhone = '' }) => {
+const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = '', customerPhone = '', customerName = '', reviewVoucherToken = '' }) => {
   const total = Number(subtotal || 0);
   if (total <= 0) return null;
 
   const normalizedCode = String(voucherCode || '').trim().toUpperCase();
   const components = [];
   let voucher = null;
+  let reviewVoucher = null;
 
   if (normalizedCode) {
     const [rows] = await executor.query(
@@ -253,6 +522,21 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
       err.status_code = 400;
       throw err;
     }
+  }
+
+  if (reviewVoucherToken) {
+    const validation = await validateReviewVoucher(executor, {
+      token: reviewVoucherToken,
+      customerPhone,
+      customerName,
+      requireIdentity: true,
+    });
+    if (!validation.valid) {
+      const err = new Error(validation.message);
+      err.status_code = 400;
+      throw err;
+    }
+    reviewVoucher = validation.voucher;
   }
 
   const bundles = await getActivePrograms(executor, 'bundle');
@@ -284,6 +568,32 @@ const findBestDiscount = async ({ executor, subtotal, items = [], voucherCode = 
       if (amount > 0) {
         components.push(makeDiscountComponent({ program: voucher, usage, discountBase: voucherBase, amount }));
       }
+    }
+  }
+
+  if (reviewVoucher) {
+    const reviewProgram = {
+      id: reviewVoucher.program_id,
+      name: reviewVoucher.program_name || 'Voucher Review Pelanggan',
+      type: 'review_reward',
+      discount_type: reviewVoucher.discount_type,
+      discount_value: Number(reviewVoucher.discount_value || 0),
+    };
+    const reviewBase = toMoney(Math.max(0, total - Number(bestBundle?.discount_base || 0)));
+    const amount = calculateAmount(reviewBase, reviewProgram);
+    if (amount > 0) {
+      components.push({
+        program: reviewProgram,
+        review_voucher: buildReviewVoucherPayload(reviewVoucher),
+        review_voucher_token: reviewVoucher.token,
+        discount_base: reviewBase,
+        discount_amount: toMoney(amount),
+        discount_rate: reviewProgram.discount_type === 'percent' ? Number(reviewProgram.discount_value || 0) : 0,
+        discount_label: reviewProgram.name,
+        voucher_code: reviewVoucher.token,
+        normalized_phone: reviewVoucher.normalized_phone || normalizePhone(customerPhone),
+        bundle_items: [],
+      });
     }
   }
 
@@ -325,12 +635,20 @@ module.exports = {
   findBestDiscount,
   getActivePrograms,
   getProgramById,
+  buildReviewVoucherPayload,
+  createReviewVoucher,
+  ensureReviewVoucherSchema,
+  extractReviewVoucherToken,
   getReviewProgram,
+  getReviewVoucherByToken,
   normalizePhone,
   normalizeProgram,
   parseBundleItems,
   parseBundleIds,
   recordRedemption,
+  redeemReviewVoucher,
   serializeBundleIds,
+  validateReviewVoucher,
+  validateReviewRewardIssuance,
   validateProgramUsage,
 };

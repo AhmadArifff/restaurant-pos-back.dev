@@ -4,12 +4,14 @@ const { createTransaction } = require('../services/transactionService');
 const { getUserIngredientBalances } = require('../services/stockAllocationService');
 const { getRequestBranchId } = require('../utils/branchContext');
 const {
-  calculateAmount,
+  createReviewVoucher,
+  ensureReviewVoucherSchema,
   findBestDiscount,
   getReviewProgram,
   parseBundleItems,
+  redeemReviewVoucher,
   recordRedemption,
-  validateProgramUsage,
+  validateReviewRewardIssuance,
 } = require('../services/discountService');
 const {
   buildPaymentOrderFields,
@@ -343,6 +345,17 @@ const attachOrderDetails = async (order) => {
   const [paymentMethods] = order.payment_method_id
     ? await db.query('SELECT * FROM payment_methods WHERE id = ? LIMIT 1', [order.payment_method_id])
     : [[]];
+  await ensureReviewVoucherSchema(db);
+  const [reviewVouchers] = await db.query(`
+    SELECT rv.*, co.order_code AS source_order_code, co.created_at AS source_order_date,
+      dp.name AS program_name
+    FROM review_reward_vouchers rv
+    JOIN customer_orders co ON co.id = rv.source_order_id
+    LEFT JOIN discount_programs dp ON dp.id = rv.program_id
+    WHERE rv.source_order_id = ?
+    ORDER BY rv.id DESC
+    LIMIT 1
+  `, [order.id]);
 
   const reviewByItemId = itemReviews.reduce((acc, review) => {
     acc[review.order_item_id] = review;
@@ -369,6 +382,27 @@ const attachOrderDetails = async (order) => {
       review: reviewByItemId[item.id] || null,
     })),
     service_review: serviceReviews[0] || null,
+    review_voucher: reviewVouchers[0] ? {
+      token: reviewVouchers[0].token,
+      program_id: reviewVouchers[0].program_id,
+      program_name: reviewVouchers[0].program_name || 'Voucher Review Pelanggan',
+      discount_type: reviewVouchers[0].discount_type,
+      discount_value: Number(reviewVouchers[0].discount_value || 0),
+      customer_name: reviewVouchers[0].customer_name || '',
+      customer_phone: reviewVouchers[0].customer_phone || '',
+      source_order_id: reviewVouchers[0].source_order_id,
+      source_order_code: reviewVouchers[0].source_order_code,
+      source_order_date: reviewVouchers[0].source_order_date,
+      issued_at: reviewVouchers[0].issued_at,
+      expires_at: reviewVouchers[0].expires_at,
+      redeemed_at: reviewVouchers[0].redeemed_at,
+      redeemed_order_id: reviewVouchers[0].redeemed_order_id,
+      status: reviewVouchers[0].status,
+      qr_payload: JSON.stringify({
+        type: 'review_reward_voucher',
+        token: reviewVouchers[0].token,
+      }),
+    } : null,
   };
 };
 
@@ -895,7 +929,8 @@ exports.createOrder = async (req, res) => {
     await ensureTableSlotTables();
     await expireTableSessions();
     await ensurePaymentTables();
-    const { table_token, table_session_token, customer_name, customer_phone, note, items, voucher_code, payment_method_id } = req.body;
+    await ensureReviewVoucherSchema(db);
+    const { table_token, table_session_token, customer_name, customer_phone, note, items, voucher_code, review_voucher_token, payment_method_id } = req.body;
 
     if (!table_token) return res.status(400).json({ message: 'Token meja wajib diisi' });
     if (!Array.isArray(items) || items.length === 0) {
@@ -1004,6 +1039,8 @@ exports.createOrder = async (req, res) => {
       items: orderItems,
       voucherCode: voucher_code || '',
       customerPhone: customer_phone || '',
+      customerName: customer_name || '',
+      reviewVoucherToken: review_voucher_token || '',
     });
     const discountAmount = Number(discount?.discount_amount || 0);
     const finalTotal = toMoney(subtotal - discountAmount);
@@ -1062,6 +1099,12 @@ exports.createOrder = async (req, res) => {
         discountAmount: component.discount_amount,
         voucherCode: component.voucher_code,
       });
+      if (component.program?.type === 'review_reward' && component.review_voucher_token) {
+        await redeemReviewVoucher(conn, {
+          token: component.review_voucher_token,
+          orderId,
+        });
+      }
     }
     if (table_session_token) {
       await conn.query(`UPDATE customer_table_sessions SET status = 'released', released_at = ${nowSql()} WHERE session_token = ?`, [table_session_token]);
@@ -1154,6 +1197,7 @@ exports.submitReview = async (req, res) => {
   const conn = await db.getConnection();
   try {
     await ensureReviewHoldColumn();
+    await ensureReviewVoucherSchema(db);
     const order = await getOrderRowByCode(req.params.orderCode);
     if (!order) return res.status(404).json({ message: 'Pesanan tidak ditemukan' });
     if (order.status !== 'completed') {
@@ -1177,13 +1221,14 @@ exports.submitReview = async (req, res) => {
     await conn.beginTransaction();
     const reviewProgram = await getReviewProgram(conn);
     const reviewPhone = req.body.customer_phone || order.customer_phone || '';
+    const reviewName = req.body.customer_name || order.customer_name || '';
     let rewardEligible = Boolean(reviewProgram?.id);
     let rewardMessage = rewardEligible
-      ? `${reviewProgram.name} berhasil diterapkan.`
+      ? `${reviewProgram.name} berhasil dibuat sebagai voucher untuk pesanan berikutnya.`
       : 'Program voucher review sedang tidak aktif, review tetap tersimpan tanpa voucher.';
 
     if (rewardEligible) {
-      const usage = await validateProgramUsage(conn, reviewProgram, reviewPhone);
+      const usage = await validateReviewRewardIssuance(conn, reviewProgram, reviewPhone);
       if (!usage.valid) {
         rewardEligible = false;
         rewardMessage = `${usage.message}. Review tetap tersimpan tanpa voucher.`;
@@ -1250,68 +1295,29 @@ exports.submitReview = async (req, res) => {
       });
     }
 
-    const [[bundleScope]] = await conn.query(`
-      SELECT COALESCE(SUM(dr.subtotal), 0) AS bundle_base
-      FROM discount_redemptions dr
-      JOIN discount_programs dp ON dp.id = dr.program_id
-      WHERE dr.order_id = ? AND dp.type = 'bundle'
-    `, [order.id]);
-    const reviewDiscountBase = toMoney(Math.max(0, Number(order.subtotal || 0) - Number(bundleScope?.bundle_base || 0)));
-    const reviewDiscountAmount = calculateAmount(reviewDiscountBase, reviewProgram);
-    const existingDiscountAmount = Number(order.discount_amount || 0);
-    const discountAmount = toMoney(Math.min(Number(order.subtotal), existingDiscountAmount + reviewDiscountAmount));
-    const finalTotal = toMoney(Number(order.subtotal) - discountAmount);
-    const discountRate = reviewProgram.discount_type === 'percent'
-      ? Number(reviewProgram.discount_value || REVIEW_DISCOUNT_RATE)
-      : Number(order.discount_rate || 0);
-    const discountLabel = order.discount_label
-      ? `${order.discount_label} + ${reviewProgram.name}`
-      : reviewProgram.name;
+    const reviewVoucher = await createReviewVoucher(conn, {
+      order,
+      program: reviewProgram,
+      customerPhone: reviewPhone,
+      customerName: reviewName,
+    });
 
     await conn.query(`
       UPDATE customer_orders
-      SET discount_rate = ?,
-          discount_amount = ?,
-          final_total = ?,
-          discount_label = ?,
-          discount_program_id = COALESCE(discount_program_id, ?),
-          customer_phone = COALESCE(customer_phone, ?),
+      SET customer_phone = COALESCE(customer_phone, ?),
           reviewed_at = NOW(),
           review_skipped_at = NULL
       WHERE id = ?
-    `, [discountRate, discountAmount, finalTotal, discountLabel, reviewProgram.id || null, reviewPhone || null, order.id]);
-
-    if (order.transaction_id) {
-      await conn.query(`
-        UPDATE transactions
-        SET total_price = ?,
-            discount_rate = ?,
-            discount_amount = ?,
-            discount_label = ?
-        WHERE id = ?
-      `, [finalTotal, discountRate, discountAmount, discountLabel, order.transaction_id]);
-    }
-
-    if (reviewProgram?.id && reviewDiscountAmount > 0) {
-      await recordRedemption({
-        executor: conn,
-        program: reviewProgram,
-        orderId: order.id,
-        transactionId: order.transaction_id || null,
-        customerPhone: reviewPhone,
-        subtotal: reviewDiscountBase,
-        discountAmount: reviewDiscountAmount,
-        createdBy: null,
-      });
-    }
+    `, [reviewPhone || null, order.id]);
 
     await conn.commit();
 
     const updated = await attachOrderDetails(await getOrderRowByCode(order.order_code));
     res.json({
       message: `Terima kasih atas review Anda. ${rewardMessage}`,
-      discount_rate: discountRate,
-      discount_amount: reviewDiscountAmount,
+      discount_rate: reviewProgram.discount_type === 'percent' ? Number(reviewProgram.discount_value || REVIEW_DISCOUNT_RATE) : 0,
+      discount_amount: 0,
+      review_voucher: reviewVoucher,
       data: updated,
     });
   } catch (err) {
