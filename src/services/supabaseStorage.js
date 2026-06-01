@@ -10,8 +10,10 @@ const hasSupabaseConfig = () => Boolean(
 
 const getStorageDriver = () => {
   const configured = String(process.env.STORAGE_DRIVER || '').toLowerCase();
+  if (configured === 'supabase') return 'supabase';
+  if (process.env.VERCEL && hasSupabaseConfig()) return 'supabase';
   if (configured) return configured;
-  return process.env.VERCEL && hasSupabaseConfig() ? 'supabase' : 'local';
+  return 'local';
 };
 
 const getSupabaseClient = () => {
@@ -49,6 +51,9 @@ const getPublicUrl = (objectPath) => {
 
 const uploadImageBuffer = async ({ folder, file, prefix }) => {
   const supabase = getSupabaseClient();
+  if (!supabase) {
+    throw new Error('Storage Supabase belum aktif untuk upload file.');
+  }
   const ext = path.extname(file.originalname || '') || '.bin';
   const baseName = sanitizeName(path.basename(file.originalname || 'upload', ext));
   const objectPath = `${folder}/${sanitizeName(prefix)}-${Date.now()}-${baseName}${ext.toLowerCase()}`;

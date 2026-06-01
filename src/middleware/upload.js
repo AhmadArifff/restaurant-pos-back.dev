@@ -24,7 +24,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 module.exports = multer({
-  storage: isSupabaseStorageEnabled() ? multer.memoryStorage() : storage,
+  storage: (process.env.VERCEL || isSupabaseStorageEnabled()) ? multer.memoryStorage() : storage,
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 },
 });

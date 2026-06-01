@@ -49,13 +49,17 @@ const deleteProductImage = async (imageUrl) => {
 const getUploadedProductImageUrl = async (file) => {
   if (!file) return null;
 
-  if (isSupabaseStorageEnabled()) {
+  if (isSupabaseStorageEnabled() || process.env.VERCEL) {
     const uploaded = await uploadImageBuffer({
       folder: 'products',
       prefix: 'product',
       file,
     });
     return uploaded.publicUrl;
+  }
+
+  if (!file.filename) {
+    throw new Error('Storage lokal tidak tersedia untuk upload file.');
   }
 
   return `/images/products/${file.filename}`;
