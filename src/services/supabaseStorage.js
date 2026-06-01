@@ -1,11 +1,21 @@
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
-const STORAGE_DRIVER = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'restaurant-pos-assets';
 
+const hasSupabaseConfig = () => Boolean(
+  process.env.SUPABASE_URL
+  && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY)
+);
+
+const getStorageDriver = () => {
+  const configured = String(process.env.STORAGE_DRIVER || '').toLowerCase();
+  if (configured) return configured;
+  return process.env.VERCEL && hasSupabaseConfig() ? 'supabase' : 'local';
+};
+
 const getSupabaseClient = () => {
-  if (STORAGE_DRIVER !== 'supabase') return null;
+  if (getStorageDriver() !== 'supabase') return null;
 
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY;
@@ -29,7 +39,7 @@ const sanitizeName = (value) =>
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 
-const isSupabaseStorageEnabled = () => STORAGE_DRIVER === 'supabase';
+const isSupabaseStorageEnabled = () => getStorageDriver() === 'supabase';
 
 const getPublicUrl = (objectPath) => {
   const supabase = getSupabaseClient();

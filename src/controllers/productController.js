@@ -33,13 +33,17 @@ const ensureProductImageSchema = async () => {
 const deleteProductImage = async (imageUrl) => {
   if (!imageUrl) return;
 
-  if (/^https?:\/\//i.test(imageUrl)) {
-    await deleteByPublicUrl(imageUrl);
-    return;
-  }
+  try {
+    if (/^https?:\/\//i.test(imageUrl)) {
+      await deleteByPublicUrl(imageUrl);
+      return;
+    }
 
-  const oldPath = path.join(process.cwd(), 'public', imageUrl);
-  if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    const oldPath = path.join(process.cwd(), 'public', imageUrl);
+    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+  } catch (err) {
+    console.warn('Gagal menghapus gambar produk lama:', err.message);
+  }
 };
 
 const getUploadedProductImageUrl = async (file) => {
@@ -185,7 +189,8 @@ exports.create = async (req, res) => {
 
     res.status(201).json({ message: 'Produk berhasil ditambahkan', id: productId });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('Gagal membuat produk:', err.message);
+    res.status(500).json({ message: 'Gagal menyimpan produk. Periksa gambar dan data produk lalu coba lagi.' });
   }
 };
 
@@ -198,9 +203,9 @@ exports.update = async (req, res) => {
     // Ambil data lama untuk hapus gambar lama jika ada gambar baru
     const [old] = await db.query('SELECT image_url FROM products WHERE id = ?', [id]);
     let image_url = old[0]?.image_url;
+    const oldImageUrl = image_url;
 
     if (req.file) {
-      await deleteProductImage(image_url);
       image_url = await getUploadedProductImageUrl(req.file);
     }
 
@@ -215,9 +220,14 @@ exports.update = async (req, res) => {
       await insertProductIngredients(db, id, ingredients);
     }
 
+    if (req.file && oldImageUrl && oldImageUrl !== image_url) {
+      await deleteProductImage(oldImageUrl);
+    }
+
     res.json({ message: 'Produk berhasil diupdate' });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('Gagal mengupdate produk:', err.message);
+    res.status(500).json({ message: 'Gagal mengupdate produk. Periksa gambar dan data produk lalu coba lagi.' });
   }
 };
 
