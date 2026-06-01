@@ -53,6 +53,10 @@ app.use('/api/customer', require('./routes/customerOrders'));
 
 app.use((req, res) => res.status(404).json({ message: 'Endpoint tidak ditemukan' }));
 app.use((err, req, res, next) => {
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ message: 'Ukuran file terlalu besar. Maksimal upload gambar 10MB.' });
+  }
+
   if (err?.type === 'entity.too.large') {
     return res.status(413).json({ message: 'Ukuran data terlalu besar. Unggah gambar sebagai file lalu simpan kembali.' });
   }
