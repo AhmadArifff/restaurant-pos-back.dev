@@ -12275,5 +12275,4055 @@
       "JSON",
       "tim IT"
     ]
+  },
+  {
+    "id": "AI-501",
+    "audience": "owner",
+    "question": "Kenapa pelanggan belum bisa masuk ke meja yang sedang dipakai orang lain?",
+    "expectedIntent": "table_session_other_device_block",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan meja aktif dikunci oleh session perangkat pelanggan yang sedang memakai meja, bukan oleh jaringan WiFi.",
+    "mustInclude": [
+      "Meja aktif",
+      "session",
+      "perangkat"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-502",
+    "audience": "owner",
+    "question": "Pelanggan yang sudah pilih meja tapi belum tambah menu harus dihitung aktif atau tidak?",
+    "expectedIntent": "table_session_without_cart",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan meja aktif hanya ketika ada draft/cart atau order aktif; jika pelanggan kembali tanpa cart maka meja bisa dilepas.",
+    "mustInclude": [
+      "Meja",
+      "cart",
+      "aktif"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-503",
+    "audience": "cashier",
+    "question": "Kalau pelanggan sudah tambah menu ke keranjang lalu keluar, apakah meja tetap terkunci?",
+    "expectedIntent": "table_draft_cart_lock",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan draft keranjang menyimpan sesi pelanggan sehingga meja tidak bisa dipakai perangkat lain sampai draft dibatalkan atau timeout.",
+    "mustInclude": [
+      "Draft",
+      "Keranjang",
+      "Meja"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-504",
+    "audience": "cashier",
+    "question": "Kenapa draft pesanan pelanggan bisa dibuka lagi setelah back browser?",
+    "expectedIntent": "table_saved_draft_return",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pelanggan dapat kembali ke meja yang sama dengan session perangkatnya untuk melanjutkan draft atau riwayat.",
+    "mustInclude": [
+      "Draft",
+      "Session",
+      "Riwayat"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-505",
+    "audience": "owner",
+    "question": "Kapan token meja pelanggan direset otomatis?",
+    "expectedIntent": "table_token_idle_timeout",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan token meja pelanggan reset setelah tidak ada aksi dalam rentang idle, dan pelanggan diarahkan kembali ke pilih meja.",
+    "mustInclude": [
+      "Token",
+      "30 menit",
+      "Pilih meja"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-506",
+    "audience": "owner",
+    "question": "Bagaimana sistem antrian meja bekerja saat semua meja penuh?",
+    "expectedIntent": "table_queue_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan antrian muncul ketika semua meja penuh atau masih ada antrian, pelanggan dapat pilih meja tertentu atau random meja kosong.",
+    "mustInclude": [
+      "Antrian",
+      "Meja penuh",
+      "Estimasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-507",
+    "audience": "owner",
+    "question": "Estimasi antrian meja dihitung dari apa?",
+    "expectedIntent": "table_queue_eta",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan estimasi memakai status pesanan selesai, waktu review, dan masa tunggu pembersihan meja.",
+    "mustInclude": [
+      "Estimasi",
+      "Selesai",
+      "Review"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-508",
+    "audience": "cashier",
+    "question": "Kalau pesanan selesai tapi pelanggan belum review, apakah meja langsung kosong?",
+    "expectedIntent": "table_after_done_without_review",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan meja tetap aktif dalam rentang tunggu review sebelum dilepas oleh sistem.",
+    "mustInclude": [
+      "Meja aktif",
+      "Review",
+      "Selesai"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-509",
+    "audience": "cashier",
+    "question": "Kalau pelanggan review 5 menit sebelum batas selesai, kapan meja dilepas?",
+    "expectedIntent": "table_after_late_review_cleanup",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan setelah review tetap ada waktu tunggu pembersihan sebelum meja tersedia lagi.",
+    "mustInclude": [
+      "Review",
+      "15 menit",
+      "Pembersihan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-510",
+    "audience": "owner",
+    "question": "Apa yang terjadi kalau pelanggan kembali ke pilihan meja dengan cart aktif?",
+    "expectedIntent": "table_leave_with_cart_confirmation",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sistem harus menampilkan modal konfirmasi dan menghapus cart jika pelanggan setuju keluar.",
+    "mustInclude": [
+      "Modal",
+      "Cart",
+      "Konfirmasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-511",
+    "audience": "owner",
+    "question": "Bagaimana status pesanan meja diproses?",
+    "expectedIntent": "customer_order_status_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan alur pending, diterima, disiapkan, siap diantar, selesai, dan dibatalkan.",
+    "mustInclude": [
+      "Menunggu",
+      "Diterima",
+      "Selesai"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-512",
+    "audience": "cashier",
+    "question": "Bisa approve banyak pesanan meja sekaligus?",
+    "expectedIntent": "customer_order_bulk_status",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pesanan yang diceklis bisa diproses massal dan sistem menampilkan satu modal hasil aksi.",
+    "mustInclude": [
+      "Ceklis",
+      "Approve",
+      "Modal"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-513",
+    "audience": "cashier",
+    "question": "Kenapa pesanan meja yang sudah selesai tidak bisa diceklis lagi?",
+    "expectedIntent": "customer_order_done_not_selectable",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pesanan selesai dikunci agar tidak diproses ulang.",
+    "mustInclude": [
+      "Selesai",
+      "Tidak bisa dipilih",
+      "Aman"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-514",
+    "audience": "cashier",
+    "question": "Kenapa default pesanan meja hanya hari ini?",
+    "expectedIntent": "customer_order_today_default",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan default hari ini untuk mempercepat load dan riwayat lama dibuka lewat filter tanggal.",
+    "mustInclude": [
+      "Hari ini",
+      "Filter tanggal",
+      "Cepat"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-515",
+    "audience": "cashier",
+    "question": "Bagaimana cari order meja tertentu?",
+    "expectedIntent": "customer_order_search",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan gunakan search berdasarkan meja, kode order, nama pelanggan, nomor HP, atau status bila tersedia.",
+    "mustInclude": [
+      "Search",
+      "Kode order",
+      "Meja"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-516",
+    "audience": "owner",
+    "question": "Bagaimana filter tanggal pesanan meja bekerja?",
+    "expectedIntent": "customer_order_date_range_filter",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan filter kalender range memilih tanggal awal dan akhir seperti booking hotel.",
+    "mustInclude": [
+      "Tanggal awal",
+      "Tanggal akhir",
+      "Range"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-517",
+    "audience": "customer",
+    "question": "Apa arti status Menunggu Kasir di riwayat pesanan?",
+    "expectedIntent": "customer_order_pending_meaning",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pesanan sudah masuk tetapi belum diterima kasir/admin.",
+    "mustInclude": [
+      "Menunggu Kasir",
+      "Masuk",
+      "Kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-518",
+    "audience": "customer",
+    "question": "Kapan pelanggan bisa pesan lagi setelah order selesai?",
+    "expectedIntent": "customer_reorder_after_done",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan tombol pesan kembali muncul ketika tidak ada aksi wajib aktif seperti pembayaran, proses pesanan, atau masa tunggu meja.",
+    "mustInclude": [
+      "Pesan kembali",
+      "Selesai",
+      "Riwayat"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-519",
+    "audience": "customer",
+    "question": "Kalau pesanan dibatalkan karena pembayaran expired, bisa pesan lagi?",
+    "expectedIntent": "customer_reorder_after_payment_expired",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan bisa pesan kembali setelah pesanan dibatalkan dan meja/session dilepas sesuai aturan.",
+    "mustInclude": [
+      "Dibatalkan",
+      "Pembayaran expired",
+      "Pesan kembali"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-520",
+    "audience": "cashier",
+    "question": "Apa bedanya batalkan dan hapus kembalikan stok di riwayat POS?",
+    "expectedIntent": "pos_void_vs_delete_restore_stock",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan aksi pembatalan/hapus perlu alasan dan stok dikembalikan sesuai item transaksi.",
+    "mustInclude": [
+      "Alasan",
+      "Stok kembali",
+      "Riwayat POS"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-521",
+    "audience": "cashier",
+    "question": "Kenapa hapus transaksi POS harus pakai modal alasan?",
+    "expectedIntent": "pos_delete_reason_modal",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan modal alasan dipakai agar audit lebih jelas dan tidak memakai alert browser.",
+    "mustInclude": [
+      "Modal",
+      "Alasan",
+      "Audit"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-522",
+    "audience": "owner",
+    "question": "Bagaimana diskon tampil di riwayat POS?",
+    "expectedIntent": "pos_history_discount_display",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan riwayat POS menampilkan distribusi diskon persen dan nominal rupiah untuk transaksi.",
+    "mustInclude": [
+      "Diskon",
+      "Persen",
+      "Rupiah"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-523",
+    "audience": "owner",
+    "question": "Bagaimana dashboard menampilkan diskon?",
+    "expectedIntent": "dashboard_discount_summary",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan dashboard menampilkan ringkasan distribusi diskon agar owner melihat potongan dan dampaknya.",
+    "mustInclude": [
+      "Dashboard",
+      "Diskon",
+      "Distribusi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-524",
+    "audience": "owner",
+    "question": "Bagaimana laporan memasukkan diskon?",
+    "expectedIntent": "report_discount_inclusion",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan laporan menghitung diskon sebagai potongan transaksi dan menampilkan nilai rupiah pada laporan.",
+    "mustInclude": [
+      "Laporan",
+      "Diskon",
+      "Potongan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-525",
+    "audience": "owner",
+    "question": "Apa itu Vocher & Diskon?",
+    "expectedIntent": "discount_management_scope",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan menu untuk mengatur reward review, kode voucher, dan paket bundle.",
+    "mustInclude": [
+      "Reward Review",
+      "Kode Voucher",
+      "Paket Bundle"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-526",
+    "audience": "owner",
+    "question": "Apa bedanya reward review dengan kode voucher?",
+    "expectedIntent": "discount_review_vs_voucher",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan reward review diberikan setelah review dan dipakai di pesanan berikutnya, kode voucher dimasukkan saat checkout.",
+    "mustInclude": [
+      "Reward Review",
+      "Kode Voucher",
+      "Pesanan berikutnya"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-527",
+    "audience": "owner",
+    "question": "Apa bedanya paket bundle dengan voucher biasa?",
+    "expectedIntent": "discount_bundle_vs_regular",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan bundle hanya menghitung potongan pada menu yang menjadi syarat bundle, bukan total seluruh order.",
+    "mustInclude": [
+      "Paket Bundle",
+      "Menu syarat",
+      "Bukan total"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-528",
+    "audience": "customer",
+    "question": "Kenapa diskon bundle hanya memotong menu tertentu?",
+    "expectedIntent": "discount_bundle_scope_customer",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan potongan paket bundle hanya dihitung dari menu paket yang terdaftar.",
+    "mustInclude": [
+      "Bundle",
+      "Menu paket",
+      "Potongan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-529",
+    "audience": "customer",
+    "question": "Kenapa kode voucher cuma memotong menu di luar bundle?",
+    "expectedIntent": "discount_voucher_scope_outside_bundle",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan kode voucher dihitung dari menu yang tidak sudah mendapat potongan bundle.",
+    "mustInclude": [
+      "Kode Voucher",
+      "Di luar paket bundle",
+      "Dasar potongan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-530",
+    "audience": "owner",
+    "question": "Bagaimana kuota klaim voucher ditampilkan?",
+    "expectedIntent": "discount_claim_quota_display",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan tampilkan klaim dalam format terpakai/kuota seperti 4/5 klaim.",
+    "mustInclude": [
+      "Klaim",
+      "Kuota",
+      "4/5"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-531",
+    "audience": "owner",
+    "question": "Apa arti kuota habis di voucher?",
+    "expectedIntent": "discount_quota_exhausted",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan program tidak bisa dipakai lagi ketika kuota total tercapai walau status sebelumnya aktif.",
+    "mustInclude": [
+      "Kuota Habis",
+      "Klaim",
+      "Program"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-532",
+    "audience": "owner",
+    "question": "Bagaimana expired voucher bekerja?",
+    "expectedIntent": "discount_expiry_rule",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan program bisa terjadwal dengan mulai aktif dan expired, atau tanpa expired sampai kuota habis.",
+    "mustInclude": [
+      "Mulai aktif",
+      "Expired",
+      "Kuota"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-533",
+    "audience": "owner",
+    "question": "Apa yang terjadi kalau pesanan dibatalkan setelah pakai voucher?",
+    "expectedIntent": "discount_restore_on_cancel",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan klaim voucher/diskon dikembalikan saat order pelanggan dibatalkan agar kuota tidak berkurang salah.",
+    "mustInclude": [
+      "Dibatalkan",
+      "Kuota kembali",
+      "Voucher"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-534",
+    "audience": "customer",
+    "question": "Bagaimana tahu menu yang perlu ditambah untuk klaim bundle?",
+    "expectedIntent": "discount_bundle_missing_items_hint",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sistem memberi informasi menu syarat yang belum ada di cart dan bisa menambahkan otomatis.",
+    "mustInclude": [
+      "Menu syarat",
+      "Cart",
+      "Klaim bundle"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-535",
+    "audience": "customer",
+    "question": "Setelah modal bundle menambah menu, pesanan langsung dikirim atau tidak?",
+    "expectedIntent": "discount_bundle_modal_no_auto_submit",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan setelah menu bundle ditambahkan, total potongan tampil dulu dan pelanggan menekan kirim manual lagi.",
+    "mustInclude": [
+      "Total potongan",
+      "Manual",
+      "Kirim Pesanan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-536",
+    "audience": "owner",
+    "question": "Kenapa menu bundle harus punya qty minimum?",
+    "expectedIntent": "discount_bundle_min_qty",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan qty minimum memastikan syarat paket jelas, misalnya Adana x1 dan Arabic Qahwa x1.",
+    "mustInclude": [
+      "Qty minimum",
+      "Syarat",
+      "Bundle"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-537",
+    "audience": "owner",
+    "question": "Kenapa edit bundle tidak boleh menambah duplikat menu?",
+    "expectedIntent": "discount_bundle_edit_deduplicate",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan update bundle harus mengganti daftar menu syarat yang dipilih, bukan menumpuk data lama.",
+    "mustInclude": [
+      "Edit",
+      "Duplikat",
+      "Menu syarat"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-538",
+    "audience": "owner",
+    "question": "Bagaimana kode voucher 13 karakter dibuat?",
+    "expectedIntent": "discount_code_generate_13",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan kode voucher dapat digenerate 13 karakter untuk dipakai pelanggan/kasir.",
+    "mustInclude": [
+      "Kode voucher",
+      "13 karakter",
+      "Generate"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-539",
+    "audience": "owner",
+    "question": "Kenapa nomor HP dipakai untuk batas klaim?",
+    "expectedIntent": "discount_phone_claim_guard",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan nomor HP menjadi patokan klaim per pelanggan agar diskon tidak dipakai berulang di luar aturan.",
+    "mustInclude": [
+      "Nomor HP",
+      "Klaim",
+      "Batas"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-540",
+    "audience": "customer",
+    "question": "Kenapa input nomor HP pakai format +62 dan strip?",
+    "expectedIntent": "phone_input_format",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan format +62 dan separator membantu validasi angka dan konsistensi klaim diskon.",
+    "mustInclude": [
+      "+62",
+      "Nomor HP",
+      "Validasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-541",
+    "audience": "customer",
+    "question": "Kenapa voucher review tidak memotong pesanan yang baru selesai direview?",
+    "expectedIntent": "review_voucher_next_order_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pembayaran sudah dilakukan di awal, jadi reward review menjadi voucher untuk pesanan berikutnya.",
+    "mustInclude": [
+      "Review",
+      "Pesanan berikutnya",
+      "Voucher"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-542",
+    "audience": "customer",
+    "question": "Apa isi voucher review yang didapat pelanggan?",
+    "expectedIntent": "review_voucher_card_content",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan voucher berisi diskon persen, nama pelanggan, logo toko, tanggal order, expired 7 hari, dan QR code redeem.",
+    "mustInclude": [
+      "QR code",
+      "Expired 7 hari",
+      "Nama pelanggan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-543",
+    "audience": "customer",
+    "question": "Bagaimana klaim voucher review dari gambar?",
+    "expectedIntent": "review_voucher_qr_upload_claim",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pelanggan upload gambar voucher, sistem scan QR untuk validasi tanpa menyimpan gambar ke database.",
+    "mustInclude": [
+      "Upload gambar",
+      "Scan QR",
+      "Validasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-544",
+    "audience": "owner",
+    "question": "Kenapa klaim voucher review tidak boleh bentrok dengan kode voucher?",
+    "expectedIntent": "review_voucher_separate_claim_rule",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan batas klaim reward review dihitung per program reward, bukan dicampur dengan kode voucher biasa.",
+    "mustInclude": [
+      "Reward Review",
+      "Program",
+      "Klaim"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-545",
+    "audience": "customer",
+    "question": "Kenapa review tidak perlu input nomor HP lagi?",
+    "expectedIntent": "review_phone_reuse_order",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan nomor HP review diambil dari data pesanan pelanggan sebelumnya.",
+    "mustInclude": [
+      "Nomor HP",
+      "Pesanan",
+      "Review"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-546",
+    "audience": "customer",
+    "question": "Kapan modal review muncul?",
+    "expectedIntent": "review_modal_after_order_done",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan modal review muncul setelah pesanan selesai dan ada rentang waktu sistem untuk meminta review layanan dan menu.",
+    "mustInclude": [
+      "Modal review",
+      "Selesai",
+      "Rating"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-547",
+    "audience": "customer",
+    "question": "Apa yang dinilai dalam review?",
+    "expectedIntent": "review_rating_fields",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pelanggan memberi rating pelayanan dan rating tiap menu pesanan.",
+    "mustInclude": [
+      "Rating layanan",
+      "Rating menu",
+      "Komentar"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-548",
+    "audience": "customer",
+    "question": "Bagaimana rating ditampilkan?",
+    "expectedIntent": "review_star_emoticon_display",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan rating memakai bintang 1 sampai 5, bukan angka biasa.",
+    "mustInclude": [
+      "Bintang",
+      "1 sampai 5",
+      "Rating"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-549",
+    "audience": "owner",
+    "question": "Bagaimana program reward review menentukan minimal rating?",
+    "expectedIntent": "review_reward_min_rating",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan diskon reward bisa mensyaratkan rating layanan dan rating menu minimum.",
+    "mustInclude": [
+      "Minimal rating",
+      "Layanan",
+      "Menu"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-550",
+    "audience": "cashier",
+    "question": "Bagaimana pembayaran QRIS manual bekerja?",
+    "expectedIntent": "payment_qris_manual_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pelanggan memilih QRIS, melihat QR statis toko, nominal, timer, upload bukti, lalu menunggu verifikasi admin/kasir.",
+    "mustInclude": [
+      "QRIS",
+      "Upload bukti",
+      "Verifikasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-551",
+    "audience": "customer",
+    "question": "Apa instruksi bayar QRIS?",
+    "expectedIntent": "payment_qris_instruction",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan scan QRIS, bayar sesuai nominal, upload bukti pembayaran, lalu tunggu konfirmasi.",
+    "mustInclude": [
+      "Scan QRIS",
+      "Nominal",
+      "Upload bukti"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-552",
+    "audience": "customer",
+    "question": "Bisa download QRIS pembayaran?",
+    "expectedIntent": "payment_qris_download",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan QRIS bisa diunduh agar pelanggan mudah scan dari perangkat lain.",
+    "mustInclude": [
+      "Download",
+      "QRIS",
+      "Scan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-553",
+    "audience": "customer",
+    "question": "Bagaimana pembayaran transfer bank manual?",
+    "expectedIntent": "payment_transfer_manual_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pelanggan melihat kartu rekening, salin rekening, salin nominal, upload bukti transfer, lalu menunggu verifikasi.",
+    "mustInclude": [
+      "Transfer",
+      "Copy rekening",
+      "Upload bukti"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-554",
+    "audience": "customer",
+    "question": "Apakah transfer perlu input nama pengirim dan tanggal?",
+    "expectedIntent": "payment_transfer_no_sender_date",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan transfer cukup copy rekening, copy nominal, lalu upload struk bukti pembayaran.",
+    "mustInclude": [
+      "Transfer",
+      "Upload struk",
+      "Tanpa nama pengirim"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-555",
+    "audience": "cashier",
+    "question": "Bagaimana admin melihat bukti pembayaran?",
+    "expectedIntent": "payment_proof_modal",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan bukti pembayaran dibuka lewat modal, bukan tab baru.",
+    "mustInclude": [
+      "Bukti pembayaran",
+      "Modal",
+      "Kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-556",
+    "audience": "owner",
+    "question": "Apa yang terjadi saat limit pembayaran habis?",
+    "expectedIntent": "payment_timeout_auto_cancel",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sistem otomatis membatalkan pesanan saat timer pembayaran habis dan stok/kuota terkait dikembalikan.",
+    "mustInclude": [
+      "Timer",
+      "Batal otomatis",
+      "Stok kembali"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-557",
+    "audience": "customer",
+    "question": "Kenapa order belum masuk proses dapur sebelum pembayaran diverifikasi?",
+    "expectedIntent": "payment_wait_verification_before_process",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pesanan menunggu bukti dan verifikasi admin/kasir sebelum diterima/diproses.",
+    "mustInclude": [
+      "Verifikasi",
+      "Menunggu bukti",
+      "Diterima"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-558",
+    "audience": "owner",
+    "question": "Apa fungsi menu Payment?",
+    "expectedIntent": "payment_management_scope",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan menu Payment mengatur QRIS, transfer bank, instruksi bayar, status aktif, dan batas waktu pembayaran.",
+    "mustInclude": [
+      "QRIS",
+      "Transfer",
+      "Batas waktu"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-559",
+    "audience": "owner",
+    "question": "Kenapa metode payment perlu delete?",
+    "expectedIntent": "payment_delete_action",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan metode pembayaran bisa dihapus permanen lewat modal konfirmasi agar data lama tidak tampil.",
+    "mustInclude": [
+      "Hapus",
+      "Modal",
+      "Payment"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-560",
+    "audience": "owner",
+    "question": "Bagaimana preview kartu payment dipakai?",
+    "expectedIntent": "payment_card_preview",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan form payment menampilkan preview kartu rekening/QRIS yang juga dipakai di halaman order.",
+    "mustInclude": [
+      "Preview",
+      "Kartu",
+      "Halaman order"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-561",
+    "audience": "owner",
+    "question": "Apa bedanya kartu QRIS dan kartu transfer?",
+    "expectedIntent": "payment_card_qris_vs_transfer",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan QRIS menampilkan QR/scan, transfer menampilkan rekening tanpa upload gambar QR.",
+    "mustInclude": [
+      "QRIS",
+      "Transfer",
+      "Rekening"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-562",
+    "audience": "cashier",
+    "question": "Kenapa meja aktif tidak bisa dipilih di POS?",
+    "expectedIntent": "pos_table_active_disabled",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan meja yang sedang aktif dipakai pelanggan tidak boleh dipilih kasir untuk transaksi baru.",
+    "mustInclude": [
+      "Meja aktif",
+      "POS",
+      "Tidak bisa dipilih"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-563",
+    "audience": "cashier",
+    "question": "Bagaimana sort menu kasir berdasarkan stok?",
+    "expectedIntent": "pos_menu_stock_sort",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan menu dengan stok tersedia ditampilkan di atas agar kasir cepat memilih produk yang bisa dijual.",
+    "mustInclude": [
+      "Stok tersedia",
+      "Di atas",
+      "Kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-564",
+    "audience": "customer",
+    "question": "Bagaimana sort menu halaman order berdasarkan stok?",
+    "expectedIntent": "order_menu_stock_sort",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan menu yang masih ada stoknya ditampilkan di atas, stok habis tetap terlihat tapi tombol tambah nonaktif.",
+    "mustInclude": [
+      "Stok",
+      "Tambah",
+      "Nonaktif"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-565",
+    "audience": "customer",
+    "question": "Kenapa stok berasal dari kasir?",
+    "expectedIntent": "order_ready_stock_source",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan stok siap jual pelanggan berasal dari stok cabang/kasir yang sudah disetujui atau dicatat.",
+    "mustInclude": [
+      "Stok dari Kasir",
+      "Cabang",
+      "Siap jual"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-566",
+    "audience": "owner",
+    "question": "Apa bedanya stok gudang dan stok kasir?",
+    "expectedIntent": "stock_main_vs_cashier",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan stok gudang adalah bahan master, stok kasir/cabang adalah bahan siap dipakai untuk menjual menu.",
+    "mustInclude": [
+      "Stok Gudang",
+      "Kasir",
+      "Bahan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-567",
+    "audience": "owner",
+    "question": "Kenapa bahan baku bukan ready stock produk?",
+    "expectedIntent": "stock_ingredient_not_ready_product",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan bahan baku adalah condiment/ingredient untuk resep produk, bukan item ready stock per produk.",
+    "mustInclude": [
+      "Bahan baku",
+      "Resep",
+      "Produk"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-568",
+    "audience": "owner",
+    "question": "Bagaimana HPP produk dihitung?",
+    "expectedIntent": "stock_product_hpp_recipe",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan HPP berasal dari jumlah bahan resep dikali harga satuan bahan.",
+    "mustInclude": [
+      "HPP",
+      "Resep",
+      "Harga satuan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-569",
+    "audience": "cashier",
+    "question": "Bagaimana ajukan stok dari menu?",
+    "expectedIntent": "stock_request_from_menu",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pilih satu atau beberapa menu dan qty porsi, sistem menghitung bahan resep otomatis.",
+    "mustInclude": [
+      "Pilih menu",
+      "Qty",
+      "Bahan otomatis"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-570",
+    "audience": "cashier",
+    "question": "Apakah bahan resep di form pengajuan bisa diedit manual?",
+    "expectedIntent": "stock_request_recipe_locked",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan bahan resep dikunci sebagai ringkasan, ubah menu atau qty untuk menghitung ulang.",
+    "mustInclude": [
+      "Dikunci",
+      "Ringkasan",
+      "Qty"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-571",
+    "audience": "cashier",
+    "question": "Kenapa qty pengajuan menu tidak boleh melebihi stok bahan?",
+    "expectedIntent": "stock_request_qty_max_by_ingredient",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan qty menu dibatasi oleh kemampuan bahan tersedia berdasarkan resep.",
+    "mustInclude": [
+      "Qty",
+      "Stok bahan",
+      "Resep"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-572",
+    "audience": "admin",
+    "question": "Bagaimana catat pengeluaran stok dari menu?",
+    "expectedIntent": "stock_out_from_menu_recipe",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan admin memilih menu dan qty, sistem mengurangi bahan gudang sesuai resep.",
+    "mustInclude": [
+      "Pengeluaran stok",
+      "Menu",
+      "Resep"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-573",
+    "audience": "admin",
+    "question": "Kenapa pengajuan stok kasir tidak boleh tertimpa?",
+    "expectedIntent": "stock_request_append_not_replace",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pengajuan baru harus menambah request baru, bukan mengganti request menunggu sebelumnya.",
+    "mustInclude": [
+      "Pengajuan baru",
+      "Menunggu",
+      "Tidak tertimpa"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-574",
+    "audience": "cashier",
+    "question": "Bagaimana admin approve pengajuan stok?",
+    "expectedIntent": "stock_request_approval_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan admin meninjau bahan, qty diajukan, nilai, lalu setuju/tolak agar stok kasir bertambah sesuai approved.",
+    "mustInclude": [
+      "Approve",
+      "Ditolak",
+      "Stok kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-575",
+    "audience": "owner",
+    "question": "Apa arti harga avg dan harga terakhir bahan?",
+    "expectedIntent": "stock_price_avg_last",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan avg adalah rata-rata biaya bahan, harga terakhir adalah biaya pembelian/input paling baru.",
+    "mustInclude": [
+      "Avg",
+      "Terakhir",
+      "Harga"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-576",
+    "audience": "owner",
+    "question": "Bagaimana status aman stok bahan ditentukan?",
+    "expectedIntent": "stock_status_safe",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan status aman dibandingkan dengan minimum stok bahan.",
+    "mustInclude": [
+      "Aman",
+      "Minimum stok",
+      "Stok saat ini"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-577",
+    "audience": "admin",
+    "question": "Bagaimana reset operasional memengaruhi stok?",
+    "expectedIntent": "operational_reset_stock",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan reset operasional menghapus transaksi/order/review/pengajuan dan membuat ulang saldo stok awal tanpa menghapus master.",
+    "mustInclude": [
+      "Reset operasional",
+      "Transaksi",
+      "Master"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-578",
+    "audience": "owner",
+    "question": "Data apa yang dipertahankan saat reset operasional?",
+    "expectedIntent": "operational_reset_preserve_master",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan users, branches, dining tables, products, categories, recipes, settings, stock item master tetap dipertahankan.",
+    "mustInclude": [
+      "Users",
+      "Products",
+      "Stock master"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-579",
+    "audience": "owner",
+    "question": "Kenapa produk landing page harus sinkron dengan produk POS?",
+    "expectedIntent": "product_landing_sync",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan data menu landing dan order/kasir sebaiknya berasal dari produk agar konsisten.",
+    "mustInclude": [
+      "Landing page",
+      "Produk",
+      "Konsisten"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-580",
+    "audience": "admin",
+    "question": "Bagaimana filter kategori di menu produk?",
+    "expectedIntent": "product_category_filter",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan filter kategori membantu menampilkan produk sesuai kategori seperti kebab, minuman, dessert.",
+    "mustInclude": [
+      "Filter kategori",
+      "Produk",
+      "Kategori"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-581",
+    "audience": "admin",
+    "question": "Kenapa upload gambar produk ekstensi tertentu ditolak?",
+    "expectedIntent": "product_image_extension_validation",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan upload gambar hanya menerima ekstensi valid dan memberi pesan produksi yang ramah.",
+    "mustInclude": [
+      "Upload gambar",
+      "Ekstensi",
+      "Validasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-582",
+    "audience": "admin",
+    "question": "Apakah gambar default online menghambat update produk?",
+    "expectedIntent": "product_online_image_update",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan gambar online bisa dipakai sebagai URL, upload file baru akan disimpan sebagai asset bila format valid.",
+    "mustInclude": [
+      "Gambar online",
+      "Upload file",
+      "Asset"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-583",
+    "audience": "admin",
+    "question": "Bagaimana hapus produk terkait gambar storage?",
+    "expectedIntent": "product_delete_storage_cleanup",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan saat data dengan file asset dihapus, file storage terkait perlu ikut dibersihkan bila milik bucket aplikasi.",
+    "mustInclude": [
+      "Hapus",
+      "Storage",
+      "Asset"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-584",
+    "audience": "admin",
+    "question": "Bagaimana upload gambar landing page bekerja?",
+    "expectedIntent": "landing_image_upload_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan gambar bisa berupa upload file atau URL online/embed sesuai field konten.",
+    "mustInclude": [
+      "Landing page",
+      "Upload",
+      "URL online"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-585",
+    "audience": "admin",
+    "question": "Kenapa section experience memakai gambar bukan ikon?",
+    "expectedIntent": "landing_experience_image_cards",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan section experience dapat dikelola dengan gambar 3D/asset online agar lebih estetik.",
+    "mustInclude": [
+      "Experience",
+      "Gambar",
+      "3D"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-586",
+    "audience": "admin",
+    "question": "Bagaimana mengatur section landing aktif atau nonaktif?",
+    "expectedIntent": "landing_section_visibility_toggle",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan tiap section landing punya toggle aktif/nonaktif di form pengaturan.",
+    "mustInclude": [
+      "Toggle",
+      "Aktif",
+      "Landing page"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-587",
+    "audience": "admin",
+    "question": "Apa yang terjadi kalau section landing dinonaktifkan?",
+    "expectedIntent": "landing_section_disabled_public",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan section tidak tampil di halaman publik tetapi kontennya tetap tersimpan.",
+    "mustInclude": [
+      "Nonaktif",
+      "Tidak tampil",
+      "Tersimpan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-588",
+    "audience": "admin",
+    "question": "Bagaimana tag menu tabs ditampilkan?",
+    "expectedIntent": "landing_menu_tag_display",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan tag item menu tampil di landing page dan bisa diberi warna custom.",
+    "mustInclude": [
+      "Tag",
+      "Warna",
+      "Menu Tabs"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-589",
+    "audience": "admin",
+    "question": "Kenapa description menu tabs tidak lagi banyak desimal?",
+    "expectedIntent": "landing_menu_description_decimal_format",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan jumlah bahan resep diformat rapi tanpa trailing nol panjang.",
+    "mustInclude": [
+      "Description",
+      "Resep",
+      "Desimal"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-590",
+    "audience": "admin",
+    "question": "Bagaimana menu tabs load dari produk?",
+    "expectedIntent": "landing_menu_tabs_load_products",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pilih category label dari kategori produk lalu items otomatis terisi dari produk kategori tersebut.",
+    "mustInclude": [
+      "Category Label",
+      "Produk",
+      "Items"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-591",
+    "audience": "admin",
+    "question": "Apa fungsi tag class di menu tabs?",
+    "expectedIntent": "landing_menu_tag_class",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan tag class tetap dipakai sebagai gaya bawaan jika warna tag custom kosong.",
+    "mustInclude": [
+      "Tag Class",
+      "Warna",
+      "Fallback"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-592",
+    "audience": "admin",
+    "question": "Bagaimana animasi menu tabs bekerja?",
+    "expectedIntent": "landing_menu_tabs_animation",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan showcase menu bergerak smooth, bergeser antar item sesuai kategori tanpa mengubah data produk.",
+    "mustInclude": [
+      "Animasi",
+      "Smooth",
+      "Kategori"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-593",
+    "audience": "admin",
+    "question": "Kenapa landing page menunggu asset siap?",
+    "expectedIntent": "landing_asset_preload",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan loader menunggu asset penting termuat agar section tidak tampil bolong/blank.",
+    "mustInclude": [
+      "Loader",
+      "Asset",
+      "Tidak blank"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-594",
+    "audience": "admin",
+    "question": "Kenapa loader landing tidak boleh muncul dua kali?",
+    "expectedIntent": "landing_loader_single_flow",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan loader harus muncul konsisten sekali sampai konten dan asset siap.",
+    "mustInclude": [
+      "Loader",
+      "Sekali",
+      "Asset"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-595",
+    "audience": "admin",
+    "question": "Bagaimana testimonial hover bekerja?",
+    "expectedIntent": "landing_testimonial_hover",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan card testimonial mempertahankan gambar, rating, avatar, nama, dan text review saat hover.",
+    "mustInclude": [
+      "Testimonial",
+      "Hover",
+      "Rating"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-596",
+    "audience": "admin",
+    "question": "Bagaimana CTA landing memakai gambar?",
+    "expectedIntent": "landing_cta_image_display",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan CTA memakai background/gambar sesuai setting, bukan placeholder abu-abu.",
+    "mustInclude": [
+      "CTA",
+      "Gambar",
+      "Setting"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-597",
+    "audience": "admin",
+    "question": "Bagaimana login page section aktif/nonaktif?",
+    "expectedIntent": "login_section_visibility_toggle",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan blok hero images, hero text, brand, form, dan footer bisa diaktifkan/nonaktifkan.",
+    "mustInclude": [
+      "Login page",
+      "Toggle",
+      "Section"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-598",
+    "audience": "admin",
+    "question": "Apa yang terjadi jika form login dinonaktifkan?",
+    "expectedIntent": "login_form_disabled",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan form tidak tampil dan halaman menampilkan informasi bahwa form login sedang dinonaktifkan.",
+    "mustInclude": [
+      "Form login",
+      "Nonaktif",
+      "Informasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-599",
+    "audience": "admin",
+    "question": "Apakah login media bisa disembunyikan?",
+    "expectedIntent": "login_media_disabled",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan background/floating image login dapat disembunyikan melalui toggle Hero Images.",
+    "mustInclude": [
+      "Hero Images",
+      "Background",
+      "Floating image"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-600",
+    "audience": "owner",
+    "question": "Bagaimana SEO situs bekerja?",
+    "expectedIntent": "seo_site_indexing",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sitemap, robots, metadata, performance, dan domain membantu indeks Google.",
+    "mustInclude": [
+      "Sitemap",
+      "Robots",
+      "Metadata"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-601",
+    "audience": "owner",
+    "question": "Apakah domain vercel.app memengaruhi ranking?",
+    "expectedIntent": "seo_vercel_domain_impact",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan vercel.app tetap bisa diindeks, namun domain custom lebih profesional dan sinyal brand lebih baik.",
+    "mustInclude": [
+      "vercel.app",
+      "Domain custom",
+      "Ranking"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-602",
+    "audience": "owner",
+    "question": "Kenapa sitemap /order bukan sitemap valid?",
+    "expectedIntent": "seo_sitemap_order_error",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sitemap harus URL XML seperti /sitemap.xml, bukan halaman order biasa.",
+    "mustInclude": [
+      "Sitemap XML",
+      "/sitemap.xml",
+      "Order"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-603",
+    "audience": "owner",
+    "question": "Apa arti Google Search Console sudah terverifikasi?",
+    "expectedIntent": "seo_search_console_verified",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pemilik situs sudah diverifikasi sehingga bisa submit sitemap dan pantau indeks.",
+    "mustInclude": [
+      "Search Console",
+      "Verifikasi",
+      "Sitemap"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-604",
+    "audience": "owner",
+    "question": "Apa contoh query Google untuk menemukan situs?",
+    "expectedIntent": "seo_search_query_examples",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan contoh pencarian brand, nama toko, POS restoran, Sultan Kebab, dan domain.",
+    "mustInclude": [
+      "Google",
+      "Brand",
+      "Domain"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-605",
+    "audience": "owner",
+    "question": "Bagaimana performa memengaruhi SEO?",
+    "expectedIntent": "seo_performance_impact",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan kecepatan, asset, mobile responsive, dan Core Web Vitals membantu pengalaman dan ranking.",
+    "mustInclude": [
+      "Performa",
+      "Mobile",
+      "Core Web Vitals"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-606",
+    "audience": "owner",
+    "question": "Apa role admin bisa akses apa saja?",
+    "expectedIntent": "role_admin_access",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan admin bisa akses dashboard, kasir, pesanan meja, riwayat, produk, stok, laporan, user, setting, landing, payment, diskon, AI.",
+    "mustInclude": [
+      "Admin",
+      "Akses",
+      "Semua menu"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-607",
+    "audience": "owner",
+    "question": "Apa role kasir bisa akses apa saja?",
+    "expectedIntent": "role_cashier_access",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan kasir fokus POS, pesanan meja, stok/pengajuan, dan transaksi sesuai batasan role.",
+    "mustInclude": [
+      "Kasir",
+      "POS",
+      "Pengajuan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-608",
+    "audience": "cashier",
+    "question": "Kenapa kasir tidak bisa akses semua pengaturan?",
+    "expectedIntent": "role_cashier_restriction",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pembatasan role menjaga keamanan data pengaturan, user, dan laporan sensitif.",
+    "mustInclude": [
+      "Role",
+      "Keamanan",
+      "Pengaturan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-609",
+    "audience": "owner",
+    "question": "Bagaimana laporan harian dan bulanan berbeda?",
+    "expectedIntent": "report_daily_monthly",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan harian fokus tanggal tertentu, bulanan merangkum periode bulan.",
+    "mustInclude": [
+      "Harian",
+      "Bulanan",
+      "Periode"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-610",
+    "audience": "owner",
+    "question": "Apa isi laporan bisnis?",
+    "expectedIntent": "report_business_scope",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan laporan berisi omzet, profit, stok, karyawan, diskon, dan rekomendasi.",
+    "mustInclude": [
+      "Omzet",
+      "Profit",
+      "Diskon"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-611",
+    "audience": "owner",
+    "question": "Bagaimana export PDF laporan?",
+    "expectedIntent": "report_export_pdf",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan laporan dapat diekspor PDF untuk dokumentasi atau investor.",
+    "mustInclude": [
+      "Export PDF",
+      "Laporan",
+      "Dokumentasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-612",
+    "audience": "owner",
+    "question": "Bagaimana dashboard membaca data hari ini?",
+    "expectedIntent": "dashboard_today_context",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan dashboard menampilkan ringkasan tanggal berjalan seperti omzet, transaksi, stok, dan aktivitas.",
+    "mustInclude": [
+      "Dashboard",
+      "Hari ini",
+      "Ringkasan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-613",
+    "audience": "owner",
+    "question": "Bagaimana membaca performa karyawan?",
+    "expectedIntent": "staff_performance_reading",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan performa berdasarkan transaksi, omzet, margin, dan produk yang dijual per karyawan.",
+    "mustInclude": [
+      "Karyawan",
+      "Omzet",
+      "Margin"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-614",
+    "audience": "owner",
+    "question": "Kenapa AI tidak boleh menyebut query atau kolom?",
+    "expectedIntent": "ai_no_technical_leak",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan jawaban AI harus produksi-friendly, fokus insight bisnis, bukan istilah teknis database.",
+    "mustInclude": [
+      "Produksi",
+      "Insight bisnis",
+      "Tidak teknis"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-615",
+    "audience": "owner",
+    "question": "Apa yang AI lakukan jika data kosong?",
+    "expectedIntent": "ai_empty_data_response",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menyampaikan data belum tersedia dan memberi saran langkah cek tanpa mengarang angka.",
+    "mustInclude": [
+      "Data belum tersedia",
+      "Tidak mengarang",
+      "Saran"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-616",
+    "audience": "owner",
+    "question": "Apa yang AI lakukan jika pertanyaan di luar aplikasi?",
+    "expectedIntent": "ai_out_of_scope",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menjawab singkat bahwa fokusnya data aplikasi POS lalu mengarahkan ke omzet, stok, produk, laporan, dan transaksi.",
+    "mustInclude": [
+      "Fokus aplikasi",
+      "POS",
+      "Arahkan kembali"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-617",
+    "audience": "owner",
+    "question": "Bagaimana AI menjawab pertanyaan ambigu?",
+    "expectedIntent": "ai_ambiguous_question",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI meminta klarifikasi singkat atau memberi asumsi periode paling aman seperti hari ini.",
+    "mustInclude": [
+      "Klarifikasi",
+      "Asumsi",
+      "Periode"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-618",
+    "audience": "owner",
+    "question": "Bagaimana AI menjaga konteks percakapan?",
+    "expectedIntent": "ai_conversation_context",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI memakai riwayat chat relevan dan tidak pindah intent tanpa alasan.",
+    "mustInclude": [
+      "Konteks",
+      "Riwayat chat",
+      "Intent"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-619",
+    "audience": "owner",
+    "question": "Bagaimana AI menjawab soal diskon terbaik transaksi?",
+    "expectedIntent": "ai_discount_best_choice",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI harus memahami sistem memilih diskon valid terbaik, termasuk kombinasi bundle dan voucher jika memenuhi rule.",
+    "mustInclude": [
+      "Diskon terbaik",
+      "Bundle",
+      "Voucher"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-620",
+    "audience": "owner",
+    "question": "Bagaimana AI menjelaskan order dengan banyak diskon?",
+    "expectedIntent": "ai_order_discount_breakdown",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan breakdown Paket Bundle, Kode Voucher, Reward Review dengan nominal masing-masing.",
+    "mustInclude": [
+      "Paket Bundle",
+      "Kode Voucher",
+      "Reward Review"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-621",
+    "audience": "owner",
+    "question": "Bagaimana AI menjelaskan total bayar setelah diskon?",
+    "expectedIntent": "ai_total_after_discount",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan subtotal dikurangi potongan valid dan tampilkan total bayar akhir.",
+    "mustInclude": [
+      "Subtotal",
+      "Potongan",
+      "Total bayar"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-622",
+    "audience": "customer",
+    "question": "Kenapa total bayar hijau dan potongan merah?",
+    "expectedIntent": "ui_discount_color_explanation",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan warna merah menandai potongan -Rp, hijau menandai total bayar final.",
+    "mustInclude": [
+      "Merah",
+      "Hijau",
+      "Total bayar"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-623",
+    "audience": "owner",
+    "question": "Bagaimana AI menjelaskan modal sukses/gagal?",
+    "expectedIntent": "ui_modal_feedback",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan semua feedback endpoint sukses/gagal tampil sebagai modal, bukan alert browser, dan tanpa error code teknis.",
+    "mustInclude": [
+      "Modal",
+      "Sukses",
+      "Gagal"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-624",
+    "audience": "admin",
+    "question": "Kenapa error produksi tidak boleh menampilkan exception?",
+    "expectedIntent": "production_error_message_rule",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan pesan gagal harus ramah pengguna dan tidak menyebut exception/error code.",
+    "mustInclude": [
+      "Pesan ramah",
+      "Production",
+      "Tidak exception"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-625",
+    "audience": "owner",
+    "question": "Bagaimana AI menjelaskan upload asset storage?",
+    "expectedIntent": "storage_upload_cleanup",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan file upload disimpan di bucket dan file milik aplikasi dihapus saat data terkait dihapus.",
+    "mustInclude": [
+      "Storage",
+      "Upload",
+      "Hapus file"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-626",
+    "audience": "admin",
+    "question": "Apa yang terjadi jika file upload terlalu besar?",
+    "expectedIntent": "upload_file_size_limit",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan sistem memberi validasi ukuran/format dengan pesan ramah, bukan gagal 500 mentah.",
+    "mustInclude": [
+      "Ukuran file",
+      "Validasi",
+      "Pesan ramah"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-627",
+    "audience": "admin",
+    "question": "Apa format gambar yang diterima?",
+    "expectedIntent": "upload_image_allowed_extensions",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan gambar harus memakai ekstensi valid yang didukung aplikasi seperti jpg, jpeg, png, webp, gif bila diizinkan.",
+    "mustInclude": [
+      "jpg",
+      "png",
+      "webp"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-628",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca produk habis?",
+    "expectedIntent": "ai_out_of_stock_products",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI dapat menyebut produk stok habis dan dampaknya ke penjualan atau bundle.",
+    "mustInclude": [
+      "Stok habis",
+      "Produk",
+      "Bundle"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-629",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca bahan hampir habis?",
+    "expectedIntent": "ai_low_stock_ingredients",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI harus menyorot bahan di bawah minimum dan rekomendasi restock.",
+    "mustInclude": [
+      "Bahan",
+      "Minimum stok",
+      "Restock"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-630",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca menu paling laku?",
+    "expectedIntent": "ai_best_selling_menu",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menampilkan menu terjual terbanyak, omzet, dan margin jika tersedia.",
+    "mustInclude": [
+      "Menu paling laku",
+      "Omzet",
+      "Margin"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-631",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca menu margin rendah?",
+    "expectedIntent": "ai_low_margin_menu",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI membandingkan harga jual dan HPP resep untuk menemukan margin rendah.",
+    "mustInclude": [
+      "Margin rendah",
+      "Harga jual",
+      "HPP"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-632",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca diskon paling sering dipakai?",
+    "expectedIntent": "ai_top_discount_usage",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menampilkan program diskon dengan klaim terbanyak dan nilai potongan.",
+    "mustInclude": [
+      "Diskon",
+      "Klaim",
+      "Potongan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-633",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca payment pending?",
+    "expectedIntent": "ai_payment_pending_orders",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI bisa merangkum pesanan yang masih menunggu bukti/verifikasi pembayaran.",
+    "mustInclude": [
+      "Payment pending",
+      "Bukti",
+      "Verifikasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-634",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca order batal otomatis?",
+    "expectedIntent": "ai_auto_cancelled_orders",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI bisa menjelaskan pembatalan karena timer pembayaran habis.",
+    "mustInclude": [
+      "Batal otomatis",
+      "Timer",
+      "Pembayaran"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-635",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca antrian meja?",
+    "expectedIntent": "ai_table_queue_summary",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI merangkum jumlah antrian, meja tujuan, dan estimasi tunggu.",
+    "mustInclude": [
+      "Antrian",
+      "Meja",
+      "Estimasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-636",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca occupancy meja?",
+    "expectedIntent": "ai_table_occupancy",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI membedakan meja kosong, aktif, draft, order aktif, dan masa tunggu review/pembersihan.",
+    "mustInclude": [
+      "Meja kosong",
+      "Aktif",
+      "Draft"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-637",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca kasir yang sering void transaksi?",
+    "expectedIntent": "ai_cashier_void_analysis",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menyorot void/hapus transaksi beserta alasan untuk audit.",
+    "mustInclude": [
+      "Void",
+      "Alasan",
+      "Kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-638",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca pengajuan stok menunggu?",
+    "expectedIntent": "ai_pending_stock_requests",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI merangkum pengajuan stok pending per kasir, bahan, nilai, dan tanggal.",
+    "mustInclude": [
+      "Pengajuan",
+      "Menunggu",
+      "Kasir"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-639",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca nilai stok gudang?",
+    "expectedIntent": "ai_main_stock_value",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menghitung nilai stok dari qty bahan dikali harga satuan/avg.",
+    "mustInclude": [
+      "Nilai stok",
+      "Qty",
+      "Harga"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-640",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca stok siap jual menu?",
+    "expectedIntent": "ai_ready_menu_capacity",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI dapat menjelaskan menu bisa dibuat berapa porsi berdasarkan bahan resep paling membatasi.",
+    "mustInclude": [
+      "Porsi",
+      "Resep",
+      "Bahan pembatas"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-641",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca produk di landing yang tidak sinkron?",
+    "expectedIntent": "ai_landing_product_sync_issue",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menyarankan sinkronisasi menu landing dengan produk agar nama, harga, gambar, dan resep konsisten.",
+    "mustInclude": [
+      "Sinkronisasi",
+      "Landing",
+      "Produk"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-642",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca setting payment aktif?",
+    "expectedIntent": "ai_active_payment_methods",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menyebut metode payment aktif dan nonaktif tanpa menampilkan data sensitif berlebihan.",
+    "mustInclude": [
+      "Payment aktif",
+      "QRIS",
+      "Transfer"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-643",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca customer review?",
+    "expectedIntent": "ai_customer_review_summary",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI merangkum rating layanan, rating menu, komentar, dan peluang reward review.",
+    "mustInclude": [
+      "Rating layanan",
+      "Rating menu",
+      "Komentar"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-644",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca menu yang sering direview buruk?",
+    "expectedIntent": "ai_low_review_menu",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menyorot menu dengan rating rendah dan komentar berulang.",
+    "mustInclude": [
+      "Rating rendah",
+      "Menu",
+      "Komentar"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-645",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca pelayanan cabang?",
+    "expectedIntent": "ai_service_rating_branch",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI membandingkan rating layanan per cabang bila data tersedia.",
+    "mustInclude": [
+      "Rating layanan",
+      "Cabang",
+      "Perbandingan"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-646",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca performa cabang?",
+    "expectedIntent": "ai_branch_performance",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI merangkum omzet, transaksi, produk, dan stok per cabang.",
+    "mustInclude": [
+      "Cabang",
+      "Omzet",
+      "Transaksi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-647",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca produk paket spesial?",
+    "expectedIntent": "ai_special_package_analysis",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI menilai performa paket spesial dari penjualan, margin, dan stok bahan pendukung.",
+    "mustInclude": [
+      "Paket Spesial",
+      "Penjualan",
+      "Margin"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-648",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca transaksi tunai?",
+    "expectedIntent": "ai_cash_payment_summary",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI dapat merangkum transaksi tunai dan nilai kembalian jika relevan.",
+    "mustInclude": [
+      "Tunai",
+      "Transaksi",
+      "Kembalian"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-649",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca QRIS dan transfer?",
+    "expectedIntent": "ai_manual_payment_summary",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI membedakan QRIS dan transfer manual berdasarkan status bukti dan verifikasi.",
+    "mustInclude": [
+      "QRIS",
+      "Transfer",
+      "Verifikasi"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
+  },
+  {
+    "id": "AI-650",
+    "audience": "owner",
+    "question": "Bagaimana AI membaca order pelanggan dari meja?",
+    "expectedIntent": "ai_table_order_source",
+    "requiredContexts": [
+      "application-knowledge"
+    ],
+    "expectedAnswer": "Jelaskan AI membedakan order meja customer dari transaksi POS kasir.",
+    "mustInclude": [
+      "Order meja",
+      "POS",
+      "Customer"
+    ],
+    "mustNotMention": [
+      "database",
+      "query",
+      "field",
+      "kolom",
+      "API",
+      "endpoint",
+      "JSON",
+      "exception",
+      "error code",
+      "tim IT"
+    ]
   }
 ]
