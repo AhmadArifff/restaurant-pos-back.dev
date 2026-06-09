@@ -177,7 +177,7 @@ exports.active = async (req, res) => {
     if (bundleProductIds.length) {
       const placeholders = bundleProductIds.map(() => '?').join(',');
       const [productRows] = await db.query(`
-        SELECT id, name, price
+        SELECT id, name, price, image_url
         FROM products
         WHERE id IN (${placeholders})
       `, bundleProductIds);
@@ -195,6 +195,7 @@ exports.active = async (req, res) => {
           ...item,
           name: product?.name || `Menu #${item.product_id}`,
           price: product?.price == null ? null : Number(product.price || 0),
+          image_url: product?.image_url || null,
         };
       });
 
