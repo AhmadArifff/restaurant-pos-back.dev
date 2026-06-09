@@ -3,6 +3,60 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { ensureDefaultBranches } = require('./branchController');
 
+let ensureCashierScheduleTablePromise = null;
+
+const ensureCashierScheduleTable = async () => {
+  if (!ensureCashierScheduleTablePromise) {
+    ensureCashierScheduleTablePromise = (async () => {
+      if (db.isPostgres) {
+        await db.query(`
+          CREATE TABLE IF NOT EXISTS cashier_schedules (
+            id BIGSERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            work_date DATE NOT NULL,
+            start_time VARCHAR(5) NOT NULL,
+            end_time VARCHAR(5) NOT NULL,
+            shift_name VARCHAR(80) NULL,
+            status VARCHAR(24) NOT NULL DEFAULT 'scheduled',
+            note TEXT NULL,
+            created_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `);
+        await db.query('CREATE INDEX IF NOT EXISTS idx_cashier_schedules_date_user ON cashier_schedules(work_date, user_id)');
+        return;
+      }
+
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS cashier_schedules (
+          id BIGINT AUTO_INCREMENT PRIMARY KEY,
+          user_id BIGINT NOT NULL,
+          work_date DATE NOT NULL,
+          start_time VARCHAR(5) NOT NULL,
+          end_time VARCHAR(5) NOT NULL,
+          shift_name VARCHAR(80) NULL,
+          status VARCHAR(24) NOT NULL DEFAULT 'scheduled',
+          note TEXT NULL,
+          created_by BIGINT NULL,
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_cashier_schedules_date_user (work_date, user_id),
+          CONSTRAINT fk_cashier_schedules_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+          CONSTRAINT fk_cashier_schedules_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+      `);
+    })().catch((err) => {
+      ensureCashierScheduleTablePromise = null;
+      throw err;
+    });
+  }
+  return ensureCashierScheduleTablePromise;
+};
+
+const isValidDateKey = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+const isValidTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''));
+
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -150,5 +204,125 @@ exports.getAllUsers = async (req, res) => {
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getCashierSchedules = async (req, res) => {
+  try {
+    await ensureCashierScheduleTable();
+    const today = new Date().toISOString().split('T')[0];
+    const dateFrom = isValidDateKey(req.query.date_from) ? req.query.date_from : today;
+    const dateTo = isValidDateKey(req.query.date_to) ? req.query.date_to : dateFrom;
+    const params = [dateFrom, dateTo];
+    let userFilter = '';
+
+    if (req.query.user_id) {
+      userFilter = ' AND cs.user_id = ?';
+      params.push(req.query.user_id);
+    }
+
+    const [rows] = await db.query(`
+      SELECT
+        cs.id, cs.user_id, cs.work_date, cs.start_time, cs.end_time,
+        cs.shift_name, cs.status, cs.note, cs.created_by, cs.created_at, cs.updated_at,
+        u.name AS user_name, u.email AS user_email, u.role AS user_role,
+        b.name AS branch_name,
+        creator.name AS created_by_name
+      FROM cashier_schedules cs
+      JOIN users u ON u.id = cs.user_id
+      LEFT JOIN branches b ON b.id = u.default_branch_id
+      LEFT JOIN users creator ON creator.id = cs.created_by
+      WHERE cs.work_date BETWEEN ? AND ?${userFilter}
+      ORDER BY cs.work_date ASC, cs.start_time ASC, u.name ASC
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Gagal memuat jadwal kasir' });
+  }
+};
+
+exports.createCashierSchedule = async (req, res) => {
+  try {
+    await ensureCashierScheduleTable();
+    const { user_id, work_date, start_time, end_time, shift_name, status, note } = req.body || {};
+
+    if (!user_id || !isValidDateKey(work_date) || !isValidTime(start_time) || !isValidTime(end_time)) {
+      return res.status(400).json({ message: 'Kasir, tanggal, jam mulai, dan jam selesai wajib valid' });
+    }
+    if (start_time >= end_time) {
+      return res.status(400).json({ message: 'Jam selesai harus lebih besar dari jam mulai' });
+    }
+
+    const [users] = await db.query("SELECT id FROM users WHERE id = ? AND role IN ('kasir', 'admin')", [user_id]);
+    if (!users.length) return res.status(404).json({ message: 'Kasir tidak ditemukan' });
+
+    const [result] = await db.query(`
+      INSERT INTO cashier_schedules (user_id, work_date, start_time, end_time, shift_name, status, note, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      user_id,
+      work_date,
+      start_time,
+      end_time,
+      shift_name || 'Shift Kasir',
+      status || 'scheduled',
+      note || null,
+      req.user.id,
+    ]);
+
+    res.status(201).json({ message: 'Jadwal kasir berhasil dibuat', id: result.insertId });
+  } catch (err) {
+    res.status(500).json({ message: 'Gagal membuat jadwal kasir' });
+  }
+};
+
+exports.updateCashierSchedule = async (req, res) => {
+  try {
+    await ensureCashierScheduleTable();
+    const { id } = req.params;
+    const { user_id, work_date, start_time, end_time, shift_name, status, note } = req.body || {};
+
+    if (!user_id || !isValidDateKey(work_date) || !isValidTime(start_time) || !isValidTime(end_time)) {
+      return res.status(400).json({ message: 'Kasir, tanggal, jam mulai, dan jam selesai wajib valid' });
+    }
+    if (start_time >= end_time) {
+      return res.status(400).json({ message: 'Jam selesai harus lebih besar dari jam mulai' });
+    }
+
+    const [existing] = await db.query('SELECT id FROM cashier_schedules WHERE id = ?', [id]);
+    if (!existing.length) return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+
+    await db.query(`
+      UPDATE cashier_schedules
+      SET user_id = ?, work_date = ?, start_time = ?, end_time = ?, shift_name = ?, status = ?, note = ?, updated_at = NOW()
+      WHERE id = ?
+    `, [
+      user_id,
+      work_date,
+      start_time,
+      end_time,
+      shift_name || 'Shift Kasir',
+      status || 'scheduled',
+      note || null,
+      id,
+    ]);
+
+    res.json({ message: 'Jadwal kasir berhasil diperbarui' });
+  } catch (err) {
+    res.status(500).json({ message: 'Gagal memperbarui jadwal kasir' });
+  }
+};
+
+exports.deleteCashierSchedule = async (req, res) => {
+  try {
+    await ensureCashierScheduleTable();
+    const [existing] = await db.query('SELECT id FROM cashier_schedules WHERE id = ?', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+
+    await db.query('DELETE FROM cashier_schedules WHERE id = ?', [req.params.id]);
+    res.json({ message: 'Jadwal kasir berhasil dihapus' });
+  } catch (err) {
+    res.status(500).json({ message: 'Gagal menghapus jadwal kasir' });
   }
 };
