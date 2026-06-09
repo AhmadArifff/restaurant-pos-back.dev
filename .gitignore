@@ -67,3 +67,4 @@ tmp/
 *.pem
 *.key
 config.local.js
+.vercel
