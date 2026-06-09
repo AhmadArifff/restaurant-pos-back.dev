@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { ensureDefaultBranches } = require('./branchController');
+const { getRequestBranchId } = require('../utils/branchContext');
 
 let ensureCashierScheduleTablePromise = null;
 
@@ -140,15 +141,19 @@ exports.logout = async (req, res) => {
 exports.getActiveUsers = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const branchWhere = branchId && branchId !== 'all' ? 'AND u.default_branch_id = ?' : '';
+    const params = [today];
+    if (branchWhere) params.push(branchId);
     // User aktif = login hari ini & belum logout
     const [rows] = await db.query(`
       SELECT u.id, u.name, u.role, a.login_at,
              TIMESTAMPDIFF(MINUTE, a.login_at, NOW()) AS active_minutes
       FROM attendance a
       JOIN users u ON a.user_id = u.id
-      WHERE a.date = ? AND a.logout_at IS NULL
+      WHERE a.date = ? AND a.logout_at IS NULL ${branchWhere}
       ORDER BY a.login_at ASC
-    `, [today]);
+    `, params);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -182,9 +187,10 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: 'Email sudah digunakan' });
 
     const hash = await bcrypt.hash(password, 10);
+    const branchId = getRequestBranchId(req) || req.user.branch_id || req.body.default_branch_id || null;
     const [result] = await db.query(
       "INSERT INTO users (name, email, password, role, default_branch_id) VALUES (?, ?, ?, ?, ?)",
-      [name, email, hash, role || 'kasir', req.body.default_branch_id || null]
+      [name, email, hash, role || 'kasir', branchId]
     );
 
     res.status(201).json({ message: 'User berhasil dibuat', id: result.insertId });
@@ -195,11 +201,16 @@ exports.register = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
   try {
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const branchWhere = branchId && branchId !== 'all' ? 'WHERE u.default_branch_id = ?' : '';
+    const params = branchWhere ? [branchId] : [];
     const [rows] = await db.query(
       `SELECT u.id, u.name, u.email, u.role, u.default_branch_id, b.name AS branch_name, u.created_at
        FROM users u
        LEFT JOIN branches b ON b.id = u.default_branch_id
-       ORDER BY u.created_at DESC`
+       ${branchWhere}
+       ORDER BY u.created_at DESC`,
+      params
     );
     res.json(rows);
   } catch (err) {
@@ -213,12 +224,17 @@ exports.getCashierSchedules = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const dateFrom = isValidDateKey(req.query.date_from) ? req.query.date_from : today;
     const dateTo = isValidDateKey(req.query.date_to) ? req.query.date_to : dateFrom;
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
     const params = [dateFrom, dateTo];
     let userFilter = '';
 
     if (req.query.user_id) {
       userFilter = ' AND cs.user_id = ?';
       params.push(req.query.user_id);
+    }
+    if (branchId && branchId !== 'all') {
+      userFilter += ' AND u.default_branch_id = ?';
+      params.push(branchId);
     }
 
     const [rows] = await db.query(`
@@ -246,6 +262,7 @@ exports.createCashierSchedule = async (req, res) => {
   try {
     await ensureCashierScheduleTable();
     const { user_id, work_date, start_time, end_time, shift_name, status, note } = req.body || {};
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     if (!user_id || !isValidDateKey(work_date) || !isValidTime(start_time) || !isValidTime(end_time)) {
       return res.status(400).json({ message: 'Kasir, tanggal, jam mulai, dan jam selesai wajib valid' });
@@ -254,7 +271,13 @@ exports.createCashierSchedule = async (req, res) => {
       return res.status(400).json({ message: 'Jam selesai harus lebih besar dari jam mulai' });
     }
 
-    const [users] = await db.query("SELECT id FROM users WHERE id = ? AND role IN ('kasir', 'admin')", [user_id]);
+    const userParams = [user_id];
+    let branchWhere = '';
+    if (branchId && branchId !== 'all') {
+      branchWhere = ' AND default_branch_id = ?';
+      userParams.push(branchId);
+    }
+    const [users] = await db.query(`SELECT id FROM users WHERE id = ? AND role IN ('kasir', 'admin')${branchWhere}`, userParams);
     if (!users.length) return res.status(404).json({ message: 'Kasir tidak ditemukan' });
 
     const [result] = await db.query(`
@@ -282,6 +305,7 @@ exports.updateCashierSchedule = async (req, res) => {
     await ensureCashierScheduleTable();
     const { id } = req.params;
     const { user_id, work_date, start_time, end_time, shift_name, status, note } = req.body || {};
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
 
     if (!user_id || !isValidDateKey(work_date) || !isValidTime(start_time) || !isValidTime(end_time)) {
       return res.status(400).json({ message: 'Kasir, tanggal, jam mulai, dan jam selesai wajib valid' });
@@ -290,8 +314,28 @@ exports.updateCashierSchedule = async (req, res) => {
       return res.status(400).json({ message: 'Jam selesai harus lebih besar dari jam mulai' });
     }
 
-    const [existing] = await db.query('SELECT id FROM cashier_schedules WHERE id = ?', [id]);
+    const existingParams = [id];
+    let existingBranchWhere = '';
+    if (branchId && branchId !== 'all') {
+      existingBranchWhere = ' AND u.default_branch_id = ?';
+      existingParams.push(branchId);
+    }
+    const [existing] = await db.query(`
+      SELECT cs.id
+      FROM cashier_schedules cs
+      JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = ?${existingBranchWhere}
+    `, existingParams);
     if (!existing.length) return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
+
+    const userParams = [user_id];
+    let userBranchWhere = '';
+    if (branchId && branchId !== 'all') {
+      userBranchWhere = ' AND default_branch_id = ?';
+      userParams.push(branchId);
+    }
+    const [users] = await db.query(`SELECT id FROM users WHERE id = ? AND role IN ('kasir', 'admin')${userBranchWhere}`, userParams);
+    if (!users.length) return res.status(404).json({ message: 'Kasir tidak ditemukan' });
 
     await db.query(`
       UPDATE cashier_schedules
@@ -317,7 +361,19 @@ exports.updateCashierSchedule = async (req, res) => {
 exports.deleteCashierSchedule = async (req, res) => {
   try {
     await ensureCashierScheduleTable();
-    const [existing] = await db.query('SELECT id FROM cashier_schedules WHERE id = ?', [req.params.id]);
+    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const params = [req.params.id];
+    let branchWhere = '';
+    if (branchId && branchId !== 'all') {
+      branchWhere = ' AND u.default_branch_id = ?';
+      params.push(branchId);
+    }
+    const [existing] = await db.query(`
+      SELECT cs.id
+      FROM cashier_schedules cs
+      JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = ?${branchWhere}
+    `, params);
     if (!existing.length) return res.status(404).json({ message: 'Jadwal tidak ditemukan' });
 
     await db.query('DELETE FROM cashier_schedules WHERE id = ?', [req.params.id]);
