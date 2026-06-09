@@ -145,7 +145,68 @@ exports.active = async (req, res) => {
   try {
     await ensureDiscountValiditySchema();
     const programs = await getActivePrograms(db, req.query.type || null);
-    res.json(programs);
+    if (!programs.length) return res.json([]);
+
+    const programIds = programs.map((program) => program.id).filter(Boolean);
+    const statsByProgram = new Map();
+    if (programIds.length) {
+      const placeholders = programIds.map(() => '?').join(',');
+      const [statsRows] = await db.query(`
+        SELECT program_id,
+          COUNT(*) AS used_count,
+          COALESCE(SUM(discount_amount), 0) AS distributed_amount
+        FROM discount_redemptions
+        WHERE program_id IN (${placeholders})
+        GROUP BY program_id
+      `, programIds);
+      statsRows.forEach((row) => {
+        statsByProgram.set(Number(row.program_id), {
+          used_count: Number(row.used_count || 0),
+          distributed_amount: Number(row.distributed_amount || 0),
+        });
+      });
+    }
+
+    const bundleProductIds = [
+      ...new Set(programs
+        .flatMap((program) => parseBundleItems(program.bundle_items || program.bundle_product_ids))
+        .map((item) => Number(item.product_id || item.id || item))
+        .filter(Boolean)),
+    ];
+    const productById = new Map();
+    if (bundleProductIds.length) {
+      const placeholders = bundleProductIds.map(() => '?').join(',');
+      const [productRows] = await db.query(`
+        SELECT id, name, price
+        FROM products
+        WHERE id IN (${placeholders})
+      `, bundleProductIds);
+      productRows.forEach((product) => productById.set(Number(product.id), product));
+    }
+
+    res.json(programs.map((program) => {
+      const stats = statsByProgram.get(Number(program.id)) || { used_count: 0, distributed_amount: 0 };
+      const remainingQuota = program.total_usage_limit == null
+        ? null
+        : Math.max(0, Number(program.total_usage_limit || 0) - Number(stats.used_count || 0));
+      const bundleItems = parseBundleItems(program.bundle_items || program.bundle_product_ids).map((item) => {
+        const product = productById.get(Number(item.product_id));
+        return {
+          ...item,
+          name: product?.name || `Menu #${item.product_id}`,
+          price: product?.price == null ? null : Number(product.price || 0),
+        };
+      });
+
+      return {
+        ...program,
+        bundle_items: bundleItems,
+        bundle_product_ids: bundleItems,
+        used_count: stats.used_count,
+        distributed_amount: stats.distributed_amount,
+        remaining_quota: remainingQuota,
+      };
+    }));
   } catch (err) {
     sendError(res, err, 'Data diskon aktif gagal dimuat.');
   }
