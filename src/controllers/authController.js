@@ -236,7 +236,9 @@ exports.getCashierSchedules = async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const dateFrom = isValidDateKey(req.query.date_from) ? req.query.date_from : today;
     const dateTo = isValidDateKey(req.query.date_to) ? req.query.date_to : dateFrom;
-    const branchId = getRequestBranchId(req) || req.user.branch_id || null;
+    const branchId = req.query.include_all_branches_for_conflict === '1'
+      ? 'all'
+      : (getRequestBranchId(req) || req.user.branch_id || null);
     const params = [dateFrom, dateTo];
     let userFilter = '';
 
