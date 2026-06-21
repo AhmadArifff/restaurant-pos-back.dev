@@ -43,13 +43,27 @@ exports.getSummary = async (req, res) => {
 
 exports.getMonthly = async (req, res) => {
   try {
-    const { month, year } = req.query;
+    const { month, year, date_from, date_to } = req.query;
     const requestedBranchId = getRequestBranchId(req);
     const branchId = requestedBranchId === 'all' ? null : (requestedBranchId || req.user.branch_id || null);
     const y = Number(year  || new Date().getFullYear());
     const m = Number(month || new Date().getMonth() + 1);
-    const params = [y, m];
+    const params = [];
     const branchWhere = branchId ? 'AND ms.branch_id = ?' : '';
+    const dateExpr = jakartaDateExpr('ms.created_at');
+    const dateWhere = (date_from || date_to)
+      ? `AND ${dateExpr} BETWEEN ? AND ?`
+      : db.isPostgres
+        ? `AND EXTRACT(YEAR FROM ms.created_at AT TIME ZONE 'Asia/Jakarta') = ? AND EXTRACT(MONTH FROM ms.created_at AT TIME ZONE 'Asia/Jakarta') = ?`
+        : `AND YEAR(ms.created_at) = ? AND MONTH(ms.created_at) = ?`;
+
+    if (date_from || date_to) {
+      const from = date_from || date_to;
+      const to = date_to || date_from;
+      params.push(from, to);
+    } else {
+      params.push(y, m);
+    }
     if (branchId) params.push(branchId);
 
     const [rows] = await db.query(`
@@ -61,7 +75,8 @@ exports.getMonthly = async (req, res) => {
       FROM main_stock ms
       JOIN stock_items si ON ms.stock_item_id = si.id
       JOIN users u         ON ms.created_by = u.id
-      WHERE YEAR(ms.created_at) = ? AND MONTH(ms.created_at) = ?
+      WHERE 1=1
+        ${dateWhere}
         ${branchWhere}
       ORDER BY ms.created_at DESC
     `, params);
