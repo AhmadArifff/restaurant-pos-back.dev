@@ -403,6 +403,15 @@ Catatan keamanan:
 - Supabase service role key hanya boleh berada di backend/server environment.
 - Frontend hanya boleh memakai publishable key jika suatu saat dibutuhkan.
 
+### Supabase Attendance Keepalive
+
+Production memakai dua Vercel Cron harian untuk memberi aktivitas database tanpa mengubah laporan kehadiran asli:
+
+- `00:00 UTC` / `07:00 WIB`: membuat satu attendance sintetis untuk admin utama.
+- `12:00 UTC` / `19:00 WIB`: menghapus attendance sintetis pada tanggal yang sama.
+
+Record memakai `source = supabase_keepalive` dan `automation_key` unik. Login, active users, laporan, dan AI hanya membaca `source = user`. Kedua endpoint cron wajib menerima `Authorization: Bearer <CRON_SECRET>`.
+
 ### Node Server Biasa
 
 1. Siapkan database MySQL atau PostgreSQL production.

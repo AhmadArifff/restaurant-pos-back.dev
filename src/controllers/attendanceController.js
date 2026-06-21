@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { ensureAttendanceAutomationSchema } = require('../services/attendanceKeepaliveService');
 
 // ── Helpers ───────────────────────────────────────────────────
 function formatDate(d) {
@@ -36,6 +37,7 @@ async function buildHPPMap(productIds) {
 // ── getWeeklyAttendance (tidak berubah) ───────────────────────
 exports.getWeeklyAttendance = async (req, res) => {
   try {
+    await ensureAttendanceAutomationSchema();
     const { month, year } = req.query;
     const y = Number(year  || new Date().getFullYear());
     const m = Number(month || new Date().getMonth() + 1);
@@ -48,7 +50,7 @@ exports.getWeeklyAttendance = async (req, res) => {
              DAYOFWEEK(a.date) AS day_of_week
       FROM attendance a
       JOIN users u ON a.user_id = u.id
-      WHERE YEAR(a.date) = ? AND MONTH(a.date) = ?
+      WHERE YEAR(a.date) = ? AND MONTH(a.date) = ? AND a.source = 'user'
       ORDER BY u.name, a.date ASC
     `, [y, m]);
 

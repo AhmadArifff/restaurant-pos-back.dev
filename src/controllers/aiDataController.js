@@ -4,6 +4,7 @@
  */
 
 const db = require('../config/db');
+const { ensureAttendanceAutomationSchema } = require('../services/attendanceKeepaliveService');
 
 async function resolveAiDataContext(context, query = {}) {
   switch (String(context || '').toLowerCase()) {
@@ -667,13 +668,14 @@ async function getRecentTransactions(limit = 10) {
  * Get today's attendance
  */
 async function getTodayAttendance() {
+  await ensureAttendanceAutomationSchema();
   const query = `
     SELECT 
       u.id, u.name,
       a.login_at, a.logout_at,
       CASE WHEN a.login_at IS NOT NULL THEN 'hadir' ELSE 'belum absen' END as status
     FROM users u
-    LEFT JOIN attendance a ON u.id = a.user_id AND DATE(a.date) = CURDATE()
+    LEFT JOIN attendance a ON u.id = a.user_id AND DATE(a.date) = CURDATE() AND a.source = 'user'
     WHERE u.role IN ('admin', 'kasir')
     ORDER BY u.name
   `;

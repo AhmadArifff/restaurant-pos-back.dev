@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 const { ensureDefaultBranches } = require('./branchController');
 const { getRequestBranchId } = require('../utils/branchContext');
+const { ensureAttendanceAutomationSchema } = require('../services/attendanceKeepaliveService');
 
 let ensureCashierScheduleTablePromise = null;
 
@@ -108,20 +109,21 @@ exports.login = async (req, res) => {
     );
 
     // ── Catat kehadiran ──
+    await ensureAttendanceAutomationSchema();
     const today = new Date().toISOString().split('T')[0];
     const [existing] = await db.query(
-      'SELECT id FROM attendance WHERE user_id = ? AND date = ?',
+      "SELECT id FROM attendance WHERE user_id = ? AND date = ? AND source = 'user'",
       [user.id, today]
     );
     if (!existing.length) {
       await db.query(
-        'INSERT INTO attendance (user_id, date, login_at) VALUES (?, ?, NOW())',
+        "INSERT INTO attendance (user_id, date, login_at, source) VALUES (?, ?, NOW(), 'user')",
         [user.id, today]
       );
     } else {
       // Update login_at jika login ulang
       await db.query(
-        'UPDATE attendance SET login_at = NOW(), logout_at = NULL WHERE user_id = ? AND date = ?',
+        "UPDATE attendance SET login_at = NOW(), logout_at = NULL WHERE user_id = ? AND date = ? AND source = 'user'",
         [user.id, today]
       );
     }
@@ -148,9 +150,10 @@ exports.login = async (req, res) => {
 
 exports.logout = async (req, res) => {
   try {
+    await ensureAttendanceAutomationSchema();
     const today = new Date().toISOString().split('T')[0];
     await db.query(
-      'UPDATE attendance SET logout_at = NOW() WHERE user_id = ? AND date = ? AND logout_at IS NULL',
+      "UPDATE attendance SET logout_at = NOW() WHERE user_id = ? AND date = ? AND logout_at IS NULL AND source = 'user'",
       [req.user.id, today]
     );
     res.json({ message: 'Logout berhasil' });
@@ -161,6 +164,7 @@ exports.logout = async (req, res) => {
 
 exports.getActiveUsers = async (req, res) => {
   try {
+    await ensureAttendanceAutomationSchema();
     const today = new Date().toISOString().split('T')[0];
     // User aktif = login hari ini & belum logout
     const [rows] = await db.query(`
@@ -168,7 +172,7 @@ exports.getActiveUsers = async (req, res) => {
              TIMESTAMPDIFF(MINUTE, a.login_at, NOW()) AS active_minutes
       FROM attendance a
       JOIN users u ON a.user_id = u.id
-      WHERE a.date = ? AND a.logout_at IS NULL
+      WHERE a.date = ? AND a.logout_at IS NULL AND a.source = 'user'
       ORDER BY a.login_at ASC
     `, [today]);
     res.json(rows);

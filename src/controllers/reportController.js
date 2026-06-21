@@ -1,6 +1,7 @@
 const PDFDocument = require('pdfkit');
 const db = require('../config/db');
 const { getRequestBranchId } = require('../utils/branchContext');
+const { ensureAttendanceAutomationSchema } = require('../services/attendanceKeepaliveService');
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
@@ -364,6 +365,7 @@ const getLowStockItems = async () => {
 };
 
 const getAttendanceSummary = async (start, end) => {
+  await ensureAttendanceAutomationSchema();
   const activeMinutesExpr = db.isPostgres
     ? `EXTRACT(EPOCH FROM (
         (
@@ -399,7 +401,7 @@ const getAttendanceSummary = async (start, end) => {
            ) / 60, 1) AS active_hours
     FROM attendance a
     JOIN users u ON u.id = a.user_id
-    WHERE a.date BETWEEN ? AND ?
+    WHERE a.date BETWEEN ? AND ? AND a.source = 'user'
     GROUP BY u.id, u.name
     ORDER BY active_hours DESC
     LIMIT 10

@@ -153,7 +153,9 @@ create table if not exists attendance (
   user_id bigint not null references users(id) on delete cascade,
   login_at timestamptz default now(),
   logout_at timestamptz null,
-  date date not null
+  date date not null,
+  source varchar(32) not null default 'user',
+  automation_key varchar(80) null
 );
 
 create table if not exists main_stock (
@@ -415,6 +417,7 @@ create unique index if not exists unique_dining_table_branch_number on dining_ta
 
 create index if not exists idx_attendance_date on attendance(date);
 create index if not exists idx_attendance_user_date on attendance(user_id, date);
+create unique index if not exists idx_attendance_automation_key on attendance(automation_key) where automation_key is not null;
 create index if not exists idx_users_role_name on users(role, name);
 create index if not exists idx_branches_status_id on branches(status, id);
 create index if not exists idx_categories_name on categories(name);
