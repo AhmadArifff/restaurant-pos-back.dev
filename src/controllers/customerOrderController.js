@@ -8,6 +8,7 @@ const {
   ensureReviewVoucherSchema,
   findBestDiscount,
   getReviewProgram,
+  normalizePhone,
   parseBundleItems,
   redeemReviewVoucher,
   recordRedemption,
@@ -195,6 +196,23 @@ const getActiveOrderCount = async (tableId) => {
       AND ${buildActiveTableOrderCondition('')}
   `, [tableId]);
   return Number(rows[0]?.total || 0);
+};
+
+const getBlockingActiveOrders = async (tableId, customerPhone = '', executor = db) => {
+  const [rows] = await executor.query(`
+    SELECT id, order_code, status, customer_phone
+    FROM customer_orders
+    WHERE table_id = ?
+      AND ${buildActiveTableOrderCondition('')}
+    ORDER BY created_at DESC
+  `, [tableId]);
+  const normalizedInputPhone = normalizePhone(customerPhone);
+  return rows.filter((order) => {
+    const sameCompletedCustomer = order.status === 'completed'
+      && normalizedInputPhone
+      && normalizePhone(order.customer_phone) === normalizedInputPhone;
+    return !sameCompletedCustomer;
+  });
 };
 
 const getWaitingQueueCount = async (branchId = null) => {
@@ -738,13 +756,8 @@ exports.getPublicTableByToken = async (req, res) => {
     let activeOrders = 0;
     let activeSessions = 0;
     try {
-      const [orderRows] = await db.query(`
-        SELECT COUNT(id) AS active_orders
-        FROM customer_orders
-        WHERE table_id = ?
-          AND ${buildActiveTableOrderCondition('')}
-      `, [rows[0].id]);
-      activeOrders = Number(orderRows[0]?.active_orders || 0);
+      const blockingOrders = await getBlockingActiveOrders(rows[0].id, req.query.customer_phone || '');
+      activeOrders = blockingOrders.length;
     } catch (_) {
       activeOrders = 0;
     }
@@ -785,8 +798,8 @@ exports.createOrRenewTableSession = async (req, res) => {
     if (!tables.length) return res.status(404).json({ message: 'Meja tidak ditemukan atau sedang tidak aktif' });
     const table = tables[0];
 
-    const activeOrderCount = await getActiveOrderCount(table.id);
-    if (activeOrderCount > 0) return res.status(409).json({ message: 'Meja ini sedang memiliki pesanan aktif' });
+    const blockingActiveOrders = await getBlockingActiveOrders(table.id, req.body.customer_phone || req.query.customer_phone || '');
+    if (blockingActiveOrders.length > 0) return res.status(409).json({ message: 'Meja ini sedang memiliki pesanan aktif' });
 
     if (requestedToken) {
       const [existing] = await db.query(`
@@ -962,13 +975,7 @@ exports.createOrder = async (req, res) => {
     await conn.beginTransaction();
     await expireOverduePaymentOrders(conn, { tableId: tables[0].id });
 
-    const [activeOrders] = await conn.query(`
-      SELECT id, order_code
-      FROM customer_orders
-      WHERE table_id = ?
-        AND ${buildActiveTableOrderCondition('')}
-      LIMIT 1
-    `, [tables[0].id]);
+    const activeOrders = await getBlockingActiveOrders(tables[0].id, customer_phone || '', conn);
     if (activeOrders.length) {
       const err = new Error(`Meja ini masih memiliki pesanan aktif (${activeOrders[0].order_code}). Silakan pantau status atau hubungi kasir.`);
       err.status_code = 409;
